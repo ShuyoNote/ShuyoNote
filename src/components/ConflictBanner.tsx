@@ -52,9 +52,25 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
 
   if (rows.length === 0) return null;
 
+  /**
+   * A1：块级冲突裁决后，本页正文已被替换 ⇒ 旧 CRDT 状态可能落后；
+   * 显式清掉（只清状态，不动正文），下次打开按正文重新播种。
+   * ⚠️ 非编辑器路径的 opt-in：编辑器自己的保存不走这里；测试桩没有 savePageState 时跳过。
+   */
+  const clearStaleCrdtState = async () => {
+    try {
+      if (typeof api.savePageState === "function") {
+        await api.savePageState(pageId, new Uint8Array());
+      }
+    } catch (e) {
+      console.warn("[crdt] 冲突裁决后清旧状态失败（不阻塞裁决）", e);
+    }
+  };
+
   const decide = async (row: ConflictRow, choice: "local" | "remote") => {
     try {
       await api.resolvePageConflict(row.id, choice);
+      await clearStaleCrdtState();
       toast(t("conflicts.resolved"), "success");
       refresh();
     } catch (e) {
@@ -89,7 +105,10 @@ export function ConflictBanner({ pageId }: { pageId: string }) {
         break;
       }
     }
-    if (done > 0) toast(t("conflicts.batchDone", { count: done }), "success");
+    if (done > 0) {
+      await clearStaleCrdtState();
+      toast(t("conflicts.batchDone", { count: done }), "success");
+    }
     refresh();
   };
 
