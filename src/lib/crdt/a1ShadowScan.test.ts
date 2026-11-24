@@ -261,12 +261,16 @@ describe.skipIf(!RUN)("A1 影子扫描（只读）", () => {
     let Ctor: SqliteCtor;
     try {
       // ⛔ 不在模块顶层 import：CI 的 Node 22 没有 `node:sqlite`（需实验开关）⇒ 会让整个文件收集失败。
-      // ⚠️ 也不能写静态字面量 `import("node:sqlite")`：Vite 会在 transform 阶段就解析它
-      //   （实测 Node 22 下报“Cannot bundle Node.js built-in node:sqlite”）⇒ 用 Function 绕过静态分析。
-      const load = new Function("return import('node:sqlite')") as () => Promise<{
-        DatabaseSync: unknown;
-      }>;
-      const mod = await load();
+      // ⚠️ 也不能用 `import("node:sqlite")` 字面量：Vite 会静态解析它（Node22 报 Cannot bundle）。
+      // ⚠️ 也不能用 `new Function("import(...)")`：Vitest 的 VM 没有 dynamic import callback
+      //   （实测 ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING）。
+      // ✅ 用 `process.getBuiltinModule`：不经过模块解析器，Node 22.3+ 才有。
+      const getBuiltin = (process as unknown as {
+        getBuiltinModule?: (id: string) => unknown;
+      }).getBuiltinModule;
+      if (!getBuiltin) throw new Error("NOT_VERIFIED：本机 Node 没有 process.getBuiltinModule");
+      const mod = getBuiltin("node:sqlite") as { DatabaseSync: unknown } | undefined;
+      if (!mod) throw new Error("NOT_VERIFIED：本机 Node 不提供 node:sqlite");
       Ctor = mod.DatabaseSync as unknown as SqliteCtor;
     } catch (e) {
       throw new Error(`NOT_VERIFIED：本机 node:sqlite 不可用（${String(e)}）`);
