@@ -808,7 +808,7 @@ async function main() {
     // A1 默认关（2026-11-24）：本场景要验“状态走到落地实现”，显式打开设备级开关。
     const prevLS = globalThis.localStorage;
     globalThis.localStorage = {
-      getItem: (k) => (k === "shuyonote:crdt.autoMerge" ? "1" : null),
+      getItem: (k) => (k === "shuyonote:crdt.autoMerge" || k.startsWith("shuyonote:crdt.autoMerge.") ? "1" : null),
       setItem: () => {},
       removeItem: () => {},
     };

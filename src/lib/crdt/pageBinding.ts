@@ -17,7 +17,7 @@
 // `import { yDocToContentJson }` 就被门禁当场判红（`pageBinding.ts（1 处）`）⇒ 改用桥接层提供的
 // 别名 `projectStateToJson`。这就是层清单决策树里那条"会反复撞的税"。
 import type { LexicalEditor } from "lexical";
-import { a1AutoMergeEnabled, a1AutoMergeEnabledFrom } from "./a1Gate";
+import { a1AutoMergeEnabled, a1AutoMergeEnabledFrom, spaceAutoMergeEnabledFor } from "./a1Gate";
 import * as Y from "yjs";
 import {
   ensurePageCrdtState,
@@ -204,6 +204,20 @@ function recordA1Failure(pageId: string, error: unknown): void {
     localStorage.setItem(key, JSON.stringify(prev.slice(-20)));
   } catch {
     // 留痕失败不许影响主路径（页面已经保本机了）。
+  }
+}
+
+/**
+ * 空间级 A1 开关：从空间库的 `workspaces` 行取 workspace id，
+ * 再读本机 localStorage 的 `shuyonote:crdt.autoMerge.<id>`（默认关）。
+ * ⛔ 不写库、不新增表；G1-b 先这么分空间。
+ */
+export function spaceAutoMergeEnabled(db: ContentSql): boolean {
+  try {
+    const row = db.query<{ id: string }>("SELECT id FROM workspaces LIMIT 1", [])[0];
+    return row ? spaceAutoMergeEnabledFor(String(row.id)) : false;
+  } catch {
+    return false;
   }
 }
 

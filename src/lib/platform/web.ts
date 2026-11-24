@@ -4,7 +4,7 @@ import { truncateByCodePoints } from "../textSnippet";
 import { normalizeForMatch } from "../extract/normalize";
 import { readAttachmentTextVia, type DerivedTextQuery } from "./derivedText";
 import { ciphertextRefusalMessage, looksLikeCiphertext } from "../ciphertextSniff";
-import { a1AutoMergeEnabled } from "../crdt/a1Gate";
+import { a1AutoMergeEnabled, spaceAutoMergeEnabledFor } from "../crdt/a1Gate";
 import { shouldTakeRemote, readContent, readAllContents, writeContent, resolveSaveContent, localState, applyRemoteContent, pageConflictsOf, resolvePageConflict, recordLineageConflict, unresolvedLineageConflict, resolveLineageConflict, refreshPageTextIfStale, staleTextQueue, stashPendingRemote, pendingRemoteQueue, pendingRemoteSeq, pendingRemotePayload, clearPendingRemote, markPageDirty, takeRemoteWholePage, pageDocJsonInSpace, readPageCrdtState, writePageCrdtState, clearPageCrdtState, writePageProjectionIfChanged, type RemotePageRow } from "../docContent";
 import { withCrdtWire, decodeCrdtWire } from "../crdt/wireState";
 import { resolveWorkspaceSyncScope, type ClaimScopeRow } from "../crdt/claimScope";
@@ -934,7 +934,7 @@ export function applyChange(store: SqliteStore, change: SyncChange): void {
         //   就成了“内容远端、状态本机、远端版本不可重试”的半写。
         const wire = decodeCrdtWire((p as Record<string, unknown>).crdt_state);
         if (wire.kind === "ok") {
-          if (!a1AutoMergeEnabled()) {
+          if (!a1AutoMergeEnabled() || !spaceAutoMergeEnabledFor(String(p.workspace_id ?? ""))) {
             stashPendingRemote(store, p as RemotePageRow, change.seq, Date.now());
             return;
           }

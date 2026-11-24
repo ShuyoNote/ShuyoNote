@@ -36,9 +36,12 @@ G1 只对**明文空间、且显式打开 `crdt.autoMerge` 的空间**启用块�
 ⚠️ **实现进度（2026-11-24 如实记）**：
 · **已改默认关**：`a1AutoMergeEnabledFrom` 只认显式 1/true/on；
   生产调用方（main.tsx / web applyChange / 端口绑定）都过运行时开关。
-· **当前是设备级开关**：localStorage `shuyonote:crdt.autoMerge=1` 才开；
-  ⛔ **空间级 `crdt.autoMerge` 还没做** ⇒ G1-a（自用）可先用设备级，
-  G1-b（真实空间）前必须补空间级，否则“只开一个空间”做不到。
+· **设备级总开关**：localStorage `shuyonote:crdt.autoMerge=1`。
+· **空间级开关（2026-11-24 已实现）**：
+    localStorage `shuyonote:crdt.autoMerge.<workspace_id> = 1`
+    桌面主路径按空间库的 workspace id 读；Web 按载荷里的 workspace_id 读。
+  ⇒ 两者都开才合并；只开设备级不再等于全空间开。
+· 仍缺：**UI 开关**（目前需 devtools 写 localStorage）；端口/待并路径仍是设备级。
 · 既有 pageBinding 判据已按“直接调用默认合并/生产默认关”更新并通过。
 ```
 
