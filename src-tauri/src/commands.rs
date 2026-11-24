@@ -349,6 +349,10 @@ pub struct SavePageArgs {
     pub content_text: Option<String>,
     #[serde(default)]
     pub space_id: Option<String>,
+    /// A1：**非编辑器**调用方显式要求“正文已换 ⇒ 旧 CRDT 状态失效”。
+    /// 默认 false；编辑器保存路径不走它（那边由 onLocalEdit 自己写状态）。
+    #[serde(default)]
+    pub invalidate_crdt: bool,
 }
 
 #[derive(Deserialize)]
@@ -865,6 +869,10 @@ pub(crate) fn save_page_in(c: &Connection, mut args: SavePageArgs) -> Result<Pag
 
     crate::doc_content::write(c, &args.id, &content, now)?;
     crate::doc_content::derive(c, &args.id, &content)?;
+    // A1：显式 opt-in —— 只清状态，不动正文；下一次打开按正文重新播种。
+    if args.invalidate_crdt {
+        crate::page_crdt::clear_page_crdt_state(c, &args.id)?;
+    }
 
     let page = fetch_page(c, &args.id)?;
     sync::record_page_upsert(c, &page)?;
