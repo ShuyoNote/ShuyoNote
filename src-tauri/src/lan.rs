@@ -1356,7 +1356,7 @@ pub fn log_stamp() -> String {
 /// 三样都要在：**成功/共几条** ✓、**目标长什么样** ✓、**空间**（打码 ✓）；
 /// 而 ⭐ **部分失败逐条点名 ＋ 带上错误原文** ✓ —— 那正是今天判不了的那一格 ✓。
 /// 改这一处时守住：⛔ 失败一条都不许吞 ✗、⛔ 空间名不许整串打出来 ✗（只给前几位 ✓）。
-pub fn announce_send_line(o: &AnnounceOutcome, space: &str) -> String {
+pub fn announce_send_line(o: &AnnounceOutcome, space: &str, every: u64) -> String {
     // ⚠️ 目标**如实分类**（⛔ 不猜"哪些是对端"✗ —— `announce_targets` 里既有广播/回环、也有已知对端，
     //    而本函数拿不到那张分表 ✓ ⇒ 只按**地址本身**说得出的那三类报 ✓）。
     let bcast255 = o
@@ -1367,7 +1367,7 @@ pub fn announce_send_line(o: &AnnounceOutcome, space: &str) -> String {
     let loopback = o.targets.iter().filter(|t| t.ip().is_loopback()).count();
     let other = o.targets.len().saturating_sub(bcast255 + loopback);
     let mut line = format!(
-        "[{}] [mesh] 公告：发出 {}/{}（目标 {} 条：受限广播 {} ｜ 回环 {} ｜ 其它 {}）｜ 空间 {}",
+        "[{}] [mesh] 公告：发出 {}/{}（目标 {} 条：受限广播 {} ｜ 回环 {} ｜ 其它 {}）｜ 空间 {} ｜ every={}",
         log_stamp(),
         o.sent(),
         o.targets.len(),
@@ -1375,7 +1375,11 @@ pub fn announce_send_line(o: &AnnounceOutcome, space: &str) -> String {
         bcast255,
         loopback,
         other,
-        mask_space(space)
+        mask_space(space),
+        // ⭐ 2026-11-25（F3-b 复测）：把这一轮**实际生效的档位**直接落进日志 ——
+        //   没有它，8 档与 4 档在 cycle 相位上**不可区分**（真机实测踩过），只能靠推断 ✗。
+        //   1 = 不节流（每轮都发）；2 = F3-a 档 / 自适应最低档；4/8 = 自适应抬档。
+        every
     );
     // ⭐ 部分失败逐条点名 ＋ 错误原文 ✓（⛔ 一条都不许吞 ✗）—— 这正是"发出去了几条"这一格的关键 ✓。
     for (t, e) in &o.failures {
@@ -2286,9 +2290,16 @@ mod tests {
             targets: vec![bad, ok],
             failures: vec![(bad, "Permission denied (os error 13)".to_string())],
         };
-        let line = announce_send_line(&o, "123456789Ok,./");
+        let line = announce_send_line(&o, "123456789Ok,./", 2);
 
         assert!(line.contains("发出 1/2"), "成功/共几条要在：{line}");
+        // ⭐ 2026-11-25（F3-b 复测）：档位必须**直接**落进日志（8 档与 4 档否则不可区分）。
+        assert!(line.contains("every=2"), "这一轮生效的档位必须在：{line}");
+        let throttled = announce_send_line(&o, "123456789Ok,./", 8);
+        assert!(
+            throttled.contains("every=8"),
+            "抬档后要如实写 8（⛔ 不许写死 2）：{throttled}"
+        );
         assert!(
             line.contains("255.255.255.255:47821"),
             "⛔ 部分失败必须**点名到哪一条** ✗（旧实现只留最后一条错误 ＋ 只在全部失败时才报 ✓）：{line}"

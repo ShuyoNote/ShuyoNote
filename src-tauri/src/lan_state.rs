@@ -2566,6 +2566,16 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         dirty_pending,
                         fanout_every,
                     );
+                // ⭐ F3-b 复测（2026-11-25）：这一轮**实际生效**的档位 —— 只进日志读数。
+                //   1 = 不节流（每轮都发）；2 = F3-a / 自适应最低档；4/8 = 自适应抬档。
+                //   没有这一格，8 档与 4 档在 cycle 相位上不可区分（真机实测踩过）。
+                let effective_every = if bw_adapt {
+                    fanout_every
+                } else if fanout_throttle_enabled() {
+                    2
+                } else {
+                    1
+                };
                 let peers_now = state.peers(now);
                 let empty_peers = Vec::new();
                 let announce_peers = if throttle_peers {
@@ -2620,7 +2630,8 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                                 "{}",
                                 lan::announce_send_line(
                                     &o,
-                                    a.hub_spaces.first().map(String::as_str).unwrap_or("")
+                                    a.hub_spaces.first().map(String::as_str).unwrap_or(""),
+                                    effective_every
                                 )
                             );
                         }
