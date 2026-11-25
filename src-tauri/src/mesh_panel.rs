@@ -170,6 +170,8 @@ pub fn mesh_uid_confirm(
         .unwrap_or(0);
     crate::mesh_uid_confirm::confirm(&sc, peer_device.trim(), peer_uid.trim(), now)
         .map_err(|e| e.to_string())?;
+    // ⭐ 2026-11-25：用户确认了 ⇒ **立刻**清掉退避（否则确认后还要等一个退避窗口才恢复）。
+    crate::lan_refuse_backoff::clear_all();
     Ok(true)
 }
 
@@ -222,6 +224,8 @@ pub fn mesh_uid_confirm_batch(
             .map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())?;
+    // ⭐ 2026-11-25：同上 —— 一次批量确认之后立刻恢复，不等退避窗口。
+    crate::lan_refuse_backoff::clear_all();
     Ok(MeshUidBatchDone {
         written: write.len(),
     })

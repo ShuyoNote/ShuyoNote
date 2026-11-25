@@ -203,6 +203,8 @@ mod lan_heartbeat;
 mod lan_fanout;
 // ⭐ §13.3 F3-b（2026-11-25）：带宽自适应第一刀 —— 用 `[sync-metrics] bytes=` 决定公告扇出档位（默认关）。
 mod lan_bw;
+// ⭐ 2026-11-25：被「同名但 uid 不同」拒绝的空间，退避窗口内不再打这一对（确认后立刻清零）。
+mod lan_refuse_backoff;
 // 配对载荷（B 片纯函数内核）：见 [`pairing`] 模块头 —— 二维码 / 短码 PAKE / 界面在接线那一片。
 // ⚠️ 本模块**不含任何密码学**：短码通道必须 PAKE，而选型要单独过一次目（见该文件头）。
 mod cap_limits;

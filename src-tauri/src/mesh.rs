@@ -809,6 +809,9 @@ pub fn absorb_peer_batch(
         peer_name_hint,
     ) {
         crate::mesh_merge_ledger::BatchMerge::Refuse(gate) => {
+            // ⭐ 2026-11-25：记下这一刻 ⇒ 退避窗口内不再打这一对（真机实测：每 10 秒重传 34 KB，
+            //   ≈0.3 GB/天）。⛔ 闸门判定一个字没动；确认后 `clear_all` 立刻恢复。
+            crate::lan_refuse_backoff::note_refused(space_id, peer_device, crate::db::now_ms());
             eprintln!(
                 "[mesh] **不融合**（{}）：对端 `{}` 的这一批 {} 条**一条都不落库、水位不前进** \
                  ⇒ 下一轮还会再拉（如实停下，不把两个不同名的空间悄悄并在一起）。\
@@ -3059,6 +3062,15 @@ async fn round_candidates_inner(
     per_peer: Duration,
     client: reqwest::Client,
 ) -> Result<MeshRoundReport, String> {
+    // ⭐ 2026-11-25：被融合闸拒绝的空间，在退避窗口内**连这一对都不打**（省掉整批重传）。
+    //   记账在 `absorb_and_report` 的 `Refuse` 分支；清零在「确认」命令（`clear_all`）。
+    let candidates: Vec<MeshPeer> = {
+        let now_ref = crate::db::now_ms();
+        candidates
+            .into_iter()
+            .filter(|p| !crate::lan_refuse_backoff::skip_now(space_id, &p.device_id, now_ref))
+            .collect()
+    };
     let n = candidates.len();
     // ── ① 逐台读"本机要出示给它的那一份配对秘密"（读库、串行，⛔ 不做网络）
     //    ⚠️ 这一步**必须先做完**再并发：它要 `conn.lock()`，而并发段里不该再排队抢锁。
