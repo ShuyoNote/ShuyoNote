@@ -28,8 +28,13 @@ static LAST_ROUND_BYTES: AtomicU64 = AtomicU64::new(0);
 static LAST_ROUND_ATTACH_BYTES: AtomicU64 = AtomicU64::new(0);
 
 /// 上一次 pull 的变更行传输量（字节）。`mesh.rs` 在打 `[sync-metrics] ... bytes=` 的同一处记一笔。
+///
+/// ⚠️ **累加，不是覆盖**（2026-11-25 真机实测第二处）:一轮公告之间会对**多个空间×多台对端**各 pull
+/// 一次；早先写成 `store` ⇒ 10,490,172 B 的大包被同一轮里后面那些 `bytes=0` 的空间**冲掉**，
+/// 公告仍按 2 档走（真机日志 `ON3-20261125-1200.log` 逐字可见）。⇒ 必须把"两次公告之间的**总和**"
+/// 记下来。
 pub fn note_round_bytes(bytes: usize) {
-    LAST_ROUND_BYTES.store(bytes as u64, Ordering::Relaxed);
+    LAST_ROUND_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
 }
 
 /// 这一轮又搬回了多少**附件**字节（累加；一轮可能有多件）。`sync.rs` 在附件取回成功处记一笔。
@@ -116,6 +121,21 @@ mod tests {
         assert_eq!(total_round_bytes(0, 0), 0);
         assert_eq!(total_round_bytes(59_379, 6_291_456), 6_350_835);
         assert_eq!(total_round_bytes(u64::MAX, 1), u64::MAX);
+    }
+
+    /// ⭐ 2026-11-25 真机第二处：两次公告之间的**多次 pull 必须累加**。
+    ///
+    /// 早先写成 `store`（覆盖）⇒ 同一轮里 10,490,172 B 的大包被后面 `bytes=0` 的空间冲掉，
+    /// 公告仍按 2 档走（真机日志逐字可查）。这条把"累加"钉住。
+    #[test]
+    fn pulls_between_two_announces_accumulate() {
+        note_round_bytes(1_000_000);
+        note_round_bytes(500_000);
+        assert_eq!(
+            take_round_fanout_every(),
+            4,
+            "1.5 MB 应到 4 档（累加，不是最后一次覆盖）"
+        );
     }
 
     /// ⭐ 2026-11-25 真机那条原样立成判据：**6 MiB 附件必须能把档位抬到 8**。
