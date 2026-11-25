@@ -2274,22 +2274,20 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 netwatch_tick += 1;
                 if netwatch_tick % 2 == 0 {
                     let fp = crate::lan_netwatch::fingerprint(&crate::mesh::local_addrs_named());
-                    if netwatch_prev.as_deref() != Some(fp.as_str()) {
-                        if netwatch_pending.as_deref() == Some(fp.as_str()) {
-                            if crate::lan_netwatch::is_change(netwatch_prev.as_deref(), &fp) {
-                                FORCE_ANNOUNCE_AT_MS.store(now, Ordering::SeqCst);
-                                eprintln!(
-                                    "[{}] [net-watch] 地址变化 ⇒ 强制重播（env=SHUYONOTE_LAN_NETWATCH）",
-                                    lan::log_stamp()
-                                );
-                            }
-                            netwatch_prev = Some(fp);
-                            netwatch_pending = None;
-                        } else {
-                            netwatch_pending = Some(fp);
-                        }
-                    } else {
-                        netwatch_pending = None;
+                    // ⭐ 2026-11-25：去抖那三支从内联代码收进纯函数（`debounce_step`）⇒ 有判据了。
+                    let (next_prev, next_pending, changed) = crate::lan_netwatch::debounce_step(
+                        netwatch_prev.as_deref(),
+                        netwatch_pending.as_deref(),
+                        &fp,
+                    );
+                    netwatch_prev = next_prev;
+                    netwatch_pending = next_pending;
+                    if changed {
+                        FORCE_ANNOUNCE_AT_MS.store(now, Ordering::SeqCst);
+                        eprintln!(
+                            "[{}] [net-watch] 地址变化 ⇒ 强制重播（env=SHUYONOTE_LAN_NETWATCH）",
+                            lan::log_stamp()
+                        );
                     }
                 }
             }

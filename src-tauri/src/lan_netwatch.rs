@@ -75,9 +75,66 @@ pub fn netwatch_enabled_from(value: Option<&str>) -> bool {
     )
 }
 
+/// **去抖的一步**（纯函数）—— 返回 `(新 prev, 新 pending, 这一拍是否算“变化”)`。
+///
+/// 口径（与接线处逐字一致，2026-11-25 从 `lan_state` 的内联代码里抽出来以便有判据）：
+/// * 与 `prev` 相同 ⇒ 变化被撤销：`pending` 清空，不算变化；
+/// * 与 `pending` 相同（连续两拍同一个新指纹）⇒ **确认变化**：`prev` 更新、`pending` 清空；
+/// * 其它 ⇒ 记一笔 `pending`，这一拍**不**算变化（⛔ 一次抖动不算换网）。
+///
+/// ⚠️ 首个样本（`prev == None`）⇒ `is_change` 为假 ⇒ 只立基线，不算变化（⛔ 启动就重播）。
+pub fn debounce_step(
+    prev: Option<&str>,
+    pending: Option<&str>,
+    next: &str,
+) -> (Option<String>, Option<String>, bool) {
+    if prev == Some(next) {
+        return (prev.map(str::to_string), None, false);
+    }
+    if pending == Some(next) {
+        let changed = is_change(prev, next);
+        return (Some(next.to_string()), None, changed);
+    }
+    (prev.map(str::to_string), Some(next.to_string()), false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⭐ 2026-11-25：去抖那三支（原先只在内联代码里，端到端才碰得到）现在有判据了。
+    #[test]
+    fn debounce_needs_two_consecutive_same_samples() {
+        // 首个样本：只立基线，⛔ 不算变化（启动就重播是错的）。
+        let (prev, pending, changed) = debounce_step(None, None, "A");
+        assert_eq!(prev, None);
+        assert_eq!(pending.as_deref(), Some("A"));
+        assert!(!changed);
+        // 再拍一次 A ⇒ 确认基线（prev 从 None 变 A 也**不算**变化）。
+        let (prev, pending, changed) = debounce_step(None, Some("A"), "A");
+        assert_eq!(prev.as_deref(), Some("A"));
+        assert_eq!(pending, None);
+        assert!(!changed);
+        // A → B：第一拍只记 pending。
+        let (prev, pending, changed) = debounce_step(Some("A"), None, "B");
+        assert_eq!(prev.as_deref(), Some("A"));
+        assert_eq!(pending.as_deref(), Some("B"));
+        assert!(!changed);
+        // A → B 的第二拍：确认变化。
+        let (prev, pending, changed) = debounce_step(Some("A"), Some("B"), "B");
+        assert_eq!(prev.as_deref(), Some("B"));
+        assert_eq!(pending, None);
+        assert!(changed);
+    }
+
+    /// 抖动：A → B → A（第二拍又回到 A）⇒ **不算变化**，pending 清掉。
+    #[test]
+    fn a_single_jitter_is_not_a_network_change() {
+        let (prev, pending, changed) = debounce_step(Some("A"), Some("B"), "A");
+        assert_eq!(prev.as_deref(), Some("A"));
+        assert_eq!(pending, None);
+        assert!(!changed);
+    }
 
     fn a(name: &str, ip: &str) -> AddrSample {
         (name.to_string(), ip.parse().unwrap())
