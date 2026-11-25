@@ -863,13 +863,61 @@ pub fn background_round_due_with_retry(
     empty_streak: usize,
     next_at_ms: i64,
 ) -> bool {
+    // ⭐ 老签名不变：基础间隔仍按 task-12 的 empty_streak 规则算。
+    background_round_due_with_base(
+        last_ms,
+        now_ms,
+        meshed_n,
+        background_round_interval_ms(empty_streak),
+        next_at_ms,
+    )
+}
+
+/// ⭐ **S1 接线（2026-11-25）**：**基础间隔由调用方给**的"后台轮该不该跑"。
+///
+/// 用途：心跳打开时基础间隔来自 [`crate::lan_heartbeat::heartbeat_interval_ms`]（10s/60s），
+/// 其余判定（没配网格 ⇒ 不跑；加速重试截止优先）**与 [`background_round_due_with_retry`] 逐字相同**。
+pub fn background_round_due_with_base(
+    last_ms: i64,
+    now_ms: i64,
+    meshed_n: usize,
+    base_interval_ms: i64,
+    next_at_ms: i64,
+) -> bool {
     // ⭐ ① **一个网格空间都没有 ⇒ 不跑** ✓ —— "没配 ⇒ 一个字节都不动"一个字不变 ✓（判据钉着 ✓）。
     if meshed_n == 0 {
         return false;
     }
-    // ⭐ ② 常规节拍（task-12 的 empty_streak 规则，一个字不变）—— 但加速截止时间**优先**。
-    let base_due = announce_due(last_ms, now_ms, background_round_interval_ms(empty_streak));
+    // ⭐ ② 基础节拍（心跳开＝10s/60s；关＝task-12 的 120s/60s）—— 加速截止时间**优先**。
+    let base_due = announce_due(last_ms, now_ms, base_interval_ms);
     retry_due(base_due, next_at_ms, now_ms)
+}
+
+/// ⭐ **S1 接线（2026-11-25，默认关）**：心跳策略开关。
+static HEARTBEAT_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+fn heartbeat_enabled() -> bool {
+    *HEARTBEAT_ENABLED.get_or_init(|| {
+        crate::lan_heartbeat::heartbeat_enabled_from(
+            std::env::var("SHUYONOTE_LAN_HEARTBEAT").ok().as_deref(),
+        )
+    })
+}
+
+/// ⭐ **S1 接线（2026-11-25，纯函数）**：这一轮该用的基础间隔。
+///
+/// 档位输入：**只认"最近本地保存"**（`last_save_ms`，来自 `LOCAL_SAVE_AT_MS`）。
+/// ⛔ 前台焦点与插电状态**还没接**（都要新平台接口）⇒ 这里如实按 `false, false` 传，
+/// 即：**只有"刚保存过"会把档位抬到 Active**，其余一律 Idle。
+pub fn heartbeat_base_interval_ms(last_save_ms: i64, now_ms: i64) -> i64 {
+    let recent = crate::lan_heartbeat::recent_activity(
+        last_save_ms,
+        now_ms,
+        crate::lan_heartbeat::ACTIVE_WINDOW_MS,
+    );
+    crate::lan_heartbeat::heartbeat_interval_ms(crate::lan_heartbeat::tier_for(
+        false, false, recent,
+    ))
 }
 
 /// ⭐ **task-12**：后台那一轮**是不是还在跑**（⛔ 不许两轮叠在一起 ✗）。
@@ -2799,13 +2847,27 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         lan::log_stamp()
                     );
                 }
-            } else if background_round_due_with_retry(
-                last_bg_round_ms,
-                now,
-                meshed.len(),
-                BACKGROUND_EMPTY_STREAK.load(Ordering::SeqCst),
-                auto_retry_next_at(),
-            ) {
+            } else if {
+                // ⭐ S1 接线（2026-11-25，默认关）：心跳开 ⇒ 基础间隔按"最近保存"分档（10s/60s）；
+                //   关 ⇒ 逐字回到 task-12 的 120s/60s（⛔ 一个字不改）。
+                if heartbeat_enabled() {
+                    background_round_due_with_base(
+                        last_bg_round_ms,
+                        now,
+                        meshed.len(),
+                        heartbeat_base_interval_ms(LOCAL_SAVE_AT_MS.load(Ordering::SeqCst), now),
+                        auto_retry_next_at(),
+                    )
+                } else {
+                    background_round_due_with_retry(
+                        last_bg_round_ms,
+                        now,
+                        meshed.len(),
+                        BACKGROUND_EMPTY_STREAK.load(Ordering::SeqCst),
+                        auto_retry_next_at(),
+                    )
+                }
+            } {
                 last_bg_round_ms = now;
                 // ⭐ §13.12 Phase 0：常态节拍那一路**不是**对端 dirty 唤醒的 ⇒ 第四格 `false`。
                 match spawn_background_round(
@@ -5186,6 +5248,44 @@ mod p31_event_round_tests {
         // 不认识 / 空 ⇒ 不试（拿不准就不试）
         assert!(!auto_retryable(""));
         assert!(!auto_retryable("某个没见过的错误"));
+    }
+
+    /// ⭐ **S1 接线（2026-11-25，纯函数）**：心跳档位只看「最近本地保存」。
+    ///
+    /// 最近保存 ⇒ Active(10s)；保存过但已超窗 ⇒ Idle(60s)；从没保存过 ⇒ Idle。
+    /// ⚠️ 前台焦点/插电**还没接**（如实按 false 传）—— 这条注释是判据的一部分，别偷偷改成 true。
+    #[test]
+    fn heartbeat_interval_follows_recent_local_saves_only() {
+        let base = 1_000_000i64;
+        assert_eq!(
+            heartbeat_base_interval_ms(base, base + 1_000),
+            crate::lan_heartbeat::heartbeat_interval_ms(crate::lan_heartbeat::Tier::Active),
+            "刚保存过 ⇒ 10s 档"
+        );
+        assert_eq!(
+            heartbeat_base_interval_ms(base, base + crate::lan_heartbeat::ACTIVE_WINDOW_MS + 1),
+            crate::lan_heartbeat::heartbeat_interval_ms(crate::lan_heartbeat::Tier::Idle),
+            "超出活动窗口 ⇒ 60s 档"
+        );
+        assert_eq!(
+            heartbeat_base_interval_ms(0, base),
+            crate::lan_heartbeat::heartbeat_interval_ms(crate::lan_heartbeat::Tier::Idle),
+            "从没保存过 ⇒ 60s 档（⛔ 不许当成刚活动）"
+        );
+    }
+
+    /// ⭐ **S1 接线**：基础间隔由调用方给时，"没配网格 ⇒ 不跑"与"加速截止优先"两条都不变。
+    #[test]
+    fn background_round_due_with_base_keeps_the_two_guards() {
+        // 没配网格 ⇒ 一律不跑（心跳开也一样）
+        assert!(!background_round_due_with_base(0, 999_999, 0, 10_000, 0));
+        // 基础间隔 10s：到点就跑
+        assert!(background_round_due_with_base(1_000, 11_000, 1, 10_000, 0));
+        assert!(!background_round_due_with_base(1_000, 10_999, 1, 10_000, 0));
+        // 加速截止优先：基础没到点，但截止到了 ⇒ 跑
+        assert!(background_round_due_with_base(
+            1_000, 2_000, 1, 600_000, 1_500
+        ));
     }
 
     /// ⭐ **U3 片 2（2026-11-12）**：失败推进状态机 —— 网络类 4 次后停止加速；身份类不加速；成功清零。

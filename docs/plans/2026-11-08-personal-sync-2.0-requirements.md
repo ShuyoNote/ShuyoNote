@@ -443,10 +443,13 @@ LAN 直连成功率 ≥ 99%（同 Wi-Fi、正常防火墙）
 > **S1 状态（2026-11-25 核实，修正"整块未接线"的笼统说法）**：`lan_heartbeat` 六格**两格已接线**——
 > `loop_gap_ms` / `is_wake_gap` 在 `lan_state` 的 1s 循环里打 `[loop-gap] gap_ms=…`（只诊断）；
 > `wake_resync_enabled_from` 被 `SHUYONOTE_LAN_WAKE_RESYNC=1` 使用（唤醒后立即请求补一轮，**默认关**）。
-> ⛔ **策略四格零生产调用点**（2026-11-25 `grep` 实测）：`tier_for` / `heartbeat_interval_ms` /
-> `probe_due` / `backoff_after_fail` —— 它们要改"多久探一次 / 失败怎么退避"，属**用户可见行为**
-> （流量与耗电），按仓规**等 owner 拍板**才接线，且只能建在 env 门后（默认逐字节保持今天）。
-> ⚠️ 因此 S1 的验收判据「对端重启后 ≤15s 恢复」**仍未测**：它要策略层接线 ＋ 一次真机（对端退出 ≥90s）。
+> ⚠️ 策略层**同日接线（默认关）**：`SHUYONOTE_LAN_HEARTBEAT=1/true/on` 时，后台轮的基础间隔改由
+> `heartbeat_interval_ms(tier_for(false, false, recent_activity(...)))` 决定 —— 档位输入**只认"最近本地保存"**
+> （`LOCAL_SAVE_AT_MS`，窗口 2 分钟）：窗口内 ⇒ **10s**，否则 ⇒ **60s**；判定走
+> `background_round_due_with_base`（"没配网格 ⇒ 不跑"与"加速重试截止优先"两条**逐字不变**）。
+> ⛔ 仍未接：`probe_due`（到点判定用的是既有 `announce_due`）与 `backoff_after_fail`（失败退避仍走 U3 那套）；
+> **前台焦点与插电状态没有平台接口** ⇒ 如实按 `false` 传（只有"刚保存过"能抬档）。
+> ⚠️ 因此 S1 的验收判据「对端重启后 ≤15s 恢复」**仍未测**：要真机（对端退出 ≥90s ＋ 心跳开着）。
 
 ### 13.3 快速（多设备时被“轮询 × 跳数”放大）
 

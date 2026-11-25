@@ -75,6 +75,29 @@ pub fn wake_resync_enabled_from(value: Option<&str>) -> bool {
     )
 }
 
+/// ⭐ **S1 接线（2026-11-25）**：心跳策略的开关（默认关）。
+pub fn heartbeat_enabled_from(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("on")
+    )
+}
+
+/// 「最近有本地活动」的窗口：2 分钟（窗口内算 Active ⇒ 10s；超过 ⇒ Idle ⇒ 60s）。
+pub const ACTIVE_WINDOW_MS: i64 = 120_000;
+
+/// 纯函数：`last_ms` 这一刻的活动是否还在窗口内。
+///
+/// * `last_ms <= 0`（从没保存过）⇒ false；
+/// * 时钟回拨（`now < last`）⇒ **false**（⛔ 不把"时间倒流"读成"刚刚活动"）；
+/// * 边界：恰好等于窗口 ⇒ false（窗口是**左闭右开**，与 `probe_due` 的 `>=` 同尺）。
+pub fn recent_activity(last_ms: i64, now_ms: i64, window_ms: i64) -> bool {
+    if last_ms <= 0 || now_ms < last_ms {
+        return false;
+    }
+    now_ms.saturating_sub(last_ms) < window_ms.max(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +152,43 @@ mod tests {
         assert_eq!(backoff_after_fail(4), 160_000);
         assert_eq!(backoff_after_fail(5), 300_000);
         assert_eq!(backoff_after_fail(99), 300_000, "封顶不回绕");
+    }
+
+    /// ⭐ 2026-11-25（S1 接线）：最近活动的判定 ＋ 开关 ＋ **接线在岗**。
+    #[test]
+    fn recent_activity_window_and_env_gate() {
+        let w = ACTIVE_WINDOW_MS;
+        assert!(recent_activity(1_000, 1_000, w), "刚保存过 ⇒ 窗口内");
+        assert!(recent_activity(1_000, 1_000 + w - 1, w), "边界内");
+        assert!(
+            !recent_activity(1_000, 1_000 + w, w),
+            "恰好等于窗口 ⇒ 不算（左闭右开）"
+        );
+        assert!(!recent_activity(0, 5_000, w), "从没保存过 ⇒ 不算");
+        assert!(
+            !recent_activity(9_000, 1_000, w),
+            "时钟回拨 ⇒ 不算（⛔ 别读成刚刚活动）"
+        );
+        for v in [Some("1"), Some("true"), Some("ON"), Some("on ")] {
+            assert!(heartbeat_enabled_from(v), "应打开：{v:?}");
+        }
+        for v in [None, Some("0"), Some("false"), Some("off"), Some("")] {
+            assert!(!heartbeat_enabled_from(v), "应关闭：{v:?}");
+        }
+    }
+
+    /// 源码级：开关与两处调用必须真的在 `lan_state` 里（⛔ 写了没接 ✗）。
+    #[test]
+    fn wiring_is_env_gated_and_uses_the_heartbeat_interval() {
+        let src = include_str!("lan_state.rs");
+        assert!(src.contains("SHUYONOTE_LAN_HEARTBEAT"));
+        assert!(
+            src.contains("heartbeat_interval_ms("),
+            "基础间隔必须来自心跳纯函数"
+        );
+        assert!(
+            src.contains("background_round_due_with_base("),
+            "心跳档位必须真的进『该不该跑』的判定"
+        );
     }
 }
