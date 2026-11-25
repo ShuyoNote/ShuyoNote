@@ -438,6 +438,8 @@ LAN 直连成功率 ≥ 99%（同 Wi-Fi、正常防火墙）
 >
 > **S1/S2 状态（2026-11-22）**：Phase 0 **代理基线**已可量 ——`[sync-metrics]` / `[round-timing]` 行新增 `at_ms`（只加日志、⛔ 不改行为），`summarizeCadence()` 统计同一对端相邻两轮间隔（p50/p95/max、长间隔次数/最长）。⚠️ 这是**代理**：真实「换 Wi-Fi / 休眠唤醒 / 对端重启」事件**尚未埋点**，恢复时间仍量不到（⛔ 不拿轮间隔冒充）。S1 心跳/自适应、S2 换网即时反应仍**未做**（行为变更，等 owner 拍）。**2026-11-22 追加**：S1 心跳策略纯函数层 `src-tauri/src/lan_heartbeat.rs` 已就位（tier_for / heartbeat_interval_ms / probe_due / backoff_after_fail；4 条判据），并加**睡醒/长暂停**检测：`[loop-gap] gap_ms=…` 只诊断；设 `SHUYONOTE_LAN_WAKE_RESYNC=1` 时唤醒后立即请求补一轮（默认关；判据 2 条），⛔ 未接线、默认零行为变化。
 
+> **S2 状态（2026-11-25 追加，真机三条齐）**：`lan_netwatch` **早已接线**（上面 2026-11-22 那句"未接线"已过期 —— 2026-11-25 逐处核实并更正了 `lib.rs` / 模块头注释）：采样＋去抖在 `lan_state` 的 1s 循环（每 2 拍采一次、**连续 2 个相同新指纹**才算变化）、公告条件 `announce_due_with_dirty(...) || force_due(...)`、**真发出去过一条才清零**；只有 `SHUYONOTE_LAN_NETWATCH=1/true/on` 才采样（默认零行为变化）。真机读数（Windows⇄AMD，dev `ee1f456d`）：① **检测**：地址变化 6 次全触发（Wi-Fi 连/断、拔线 down/up）；② **立即重播**：**1–2 秒**补一轮（三轮实测一致，抢在 10 秒节拍前）；③ **恢复**：**23 秒**（旧版同场景 **186 秒** ⇒ 根因 `1ca1b1f9`：`clear_peer_cooldowns` 用了限定名 `meta.sync_state`，裸 meta 连接上必然 `no such table` ⇒「收到公告就清冷却」从未生效）；④ **盲区修复**：拔网线时 Windows 保留 IP ⇒ 指纹并入 `is_oper_up`（`ee1f456d`）。⚠️ 仍如实标注：拉取是**轮次驱动**（实测 20–60 秒），"恢复"数值里含调度相位；⛔ 不把"跳过"当"通过"。
+
 ### 13.3 快速（多设备时被“轮询 × 跳数”放大）
 
 | # | 项 | 现状 | 目标 | 验收判据 |
