@@ -198,7 +198,9 @@ mod lan_state;
 // ⭐ §13.2 S2 P0（2026-11-22，**2026-11-25 核实已接线**）：网络变化检测 —— 采样＋去抖在 lan_state 的 1s 循环，
 //    公告条件走 `force_due`，发出去才清零；⛔ 只有 `SHUYONOTE_LAN_NETWATCH=1/true/on` 才生效，默认零行为变化。
 mod lan_netwatch;
-// ⭐ §13.2 S1 P0（2026-11-22）：心跳策略纯函数层（⛔ 未接线，默认零行为变化）。
+// ⭐ §13.2 S1 P0（2026-11-22，**2026-11-25 核实：部分已接线**）：心跳策略纯函数 —— `loop_gap_ms`/`is_wake_gap`
+//    已用于 `[loop-gap]` 诊断、`wake_resync_enabled_from` 用于 `SHUYONOTE_LAN_WAKE_RESYNC`；
+//    ⛔ `tier_for`/`heartbeat_interval_ms`/`probe_due`/`backoff_after_fail` **零生产调用点**（策略层待 owner 拍）。
 mod lan_heartbeat;
 // ⭐ §13.3 F3 P0（2026-11-22）：公告扇出节流（默认关）。
 mod lan_fanout;
