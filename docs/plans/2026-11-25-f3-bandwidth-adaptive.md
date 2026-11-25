@@ -1,7 +1,7 @@
 # F3-b 带宽自适应（第一刀）—— 用 `[sync-metrics] bytes=` 决定公告扇出档位
 
-状态：**接线已在真机验证；4/8 档未触发（输入看不见附件流量）⇒ 默认关、不启用，待补读数或改输入**
-证据：`src-tauri/src/lan_bw.rs`（纯函数 ＋ 6 条单测，含源码级接线判据）｜`src-tauri/src/lan_state.rs`｜`src-tauri/src/mesh.rs`｜真机读数见 §4.1
+状态：**接线已在真机验证；输入盲区已补（附件另起读数并计入）；4/8 档仍待真机补测 ⇒ 默认关、不启用**
+证据：`src-tauri/src/lan_bw.rs`（纯函数 ＋ 8 条单测，含源码级接线判据与"6 MiB 附件 ⇒ 8 档"那条）｜`src-tauri/src/lan_state.rs`｜`src-tauri/src/mesh.rs`｜`src-tauri/src/sync.rs`｜真机读数见 §4.1
 上位：[2.x 快速路线](2026-11-22-sync2x-fast-roadmap.md) §2 W4 ｜ [需求 §13.3](2026-11-08-personal-sync-2.0-requirements.md) ｜ 同族：[F3-a 扇出节流](../../src-tauri/src/lan_fanout.rs)
 
 ## 0. 一句话
@@ -30,6 +30,10 @@
 
 ## 3. 档位表（保守整档，不是拟合）
 
+> **输入口径（2026-11-25 修正）**：一轮的"传输量" = **变更行字节**（`[sync-metrics] bytes=`）
+> **＋ 附件字节**（新读数 `[sync-metrics-attach] bytes=`）。
+> ⚠️ 附件**不**并进 `bytes=`（那条读数有既有口径与历史）；两者只在"算档位"这一步相加。
+
 | 上一轮传输量 | `every`（空闲轮次对端单播） | 含义 |
 |---|---|---|
 | `< 512 KiB` | 2 | 与 F3-a 档一致 |
@@ -42,18 +46,20 @@
 **本机真跑过的**：
 
 ```text
-· rustc --edition 2021 --test src-tauri/src/lan_bw.rs  ⇒ 6 passed / 0 failed
-  （阈值 2/4/8、衰减、重复衰减回落、env 门、源码级接线：lan_state 里有开关与 take_round_fanout_every、
-   mesh 里有 note_round_bytes）
-· rustfmt --check（lan_bw.rs / lan_state.rs / mesh.rs）⇒ 干净（exit 0）
+· rustc --edition 2021 --test src-tauri/src/lan_bw.rs  ⇒ 8 passed / 0 failed
+  （阈值 2/4/8、衰减、重复衰减回落、变更行＋附件相加与饱和、env 门、
+   "6 MiB 附件 ⇒ 8 档"那条真机判据、源码级接线：lan_state 有开关与 take_round_fanout_every、
+   mesh 有 note_round_bytes、sync 有 note_attachment_bytes 与 [sync-metrics-attach]）
+· rustfmt --check（lan_bw.rs / sync.rs）⇒ 干净（exit 0）
+· cargo build --features lan-quic ⇒ exit 0（crate 级真编译，含 sync.rs 的改动）
 ```
 
 **本机跑不了、由 CI 判的**（⛔ 不许读成"已验过"）：
 
 ```text
-· crate 级 `cargo check` / `cargo test`：Windows 上 rust 组跑不了（AGENTS §7）；
-  本机只有 rustfmt 的**解析**（能挡语法错，挡不住类型错）；
-· 因此 `lan_state.rs` 那 5 行接线只做到「格式/语法干净 ＋ 源码级断言」，**类型检查交给 CI**。
+· crate 级 `cargo test`：Windows 上 rust 组跑不了（AGENTS §7）⇒ 全量单测与集成测试由 CI 判；
+· 因此 `sync.rs` 那 3 行读数只做到「本地真编译 ＋ rustfmt ＋ 源码级断言」，
+  **单测执行**交给 CI。
 ```
 
 ## 4.1 真机读数（2026-11-25，Windows ⇄ AMD，`0220e287`）
@@ -76,8 +82,17 @@
    ⇒ 这一刀的输入**看不见最大那类流量**（附件），只有"大变更批"才会触发 4/8 档。
 
 ③ 4/8 档 —— **未触发、未验（⛔ 不许读成通过）**
-   窗口内没有 ≥512 KiB 的变更批 ⇒ 只观察到 2 档；要验 4/8 档需造一次 ~5 MB **正文**变化
-   （已请 AMD 造，窗口内未回）。**在拿到 4/8 档读数之前，这刀保持默认关、不启用。**
+   窗口内没有 ≥512 KiB 的变更批 ⇒ 只观察到 2 档；要验 4/8 档需造一次 ≥4 MiB 的**真实输入**
+   （大正文或大附件，见 ④）。**在拿到 4/8 档读数之前，这刀保持默认关、不启用。**
+
+④ 当天修正（输入盲区）—— 已落地，待真机补测
+   · 新增**独立读数**：附件取回成功处打 `[sync-metrics-attach] hash=… bytes=… ms=…`
+     （`sync.rs::download_one_attachment`）；⛔ 不动 `bytes=` 的既有口径；
+   · 附件字节并进档位输入：`lan_bw::note_attachment_bytes` ＋ `total_round_bytes(changes, attach)`；
+   · 立成判据：`a_six_mib_attachment_alone_lifts_the_gear_to_eight` ——
+     用真机那两个数（变更行 59,379 ＋ 附件 6,291,456）断言档位必须到 8，
+     同时断言"只看变更行就是 2 档"（把这次观测原样钉住）。
+   ⇒ 补测要造两个事件：一次 ≥4 MiB **正文**变化、一次**新**大附件（旧附件已在本机，不会再有下载字节）。
 ```
 
 ## 5. 明确不做（这一刀的边界）
@@ -95,10 +110,15 @@
 ## 6. 真机怎么量（打开之前必须先有这个）
 
 ```text
-① 开 `SHUYONOTE_LAN_BW_ADAPT=1` 跑 ≥30 分钟，同时抓 `[sync-metrics] ... bytes=` 与公告扇出读数；
+① 开 `SHUYONOTE_LAN_BW_ADAPT=1` 跑 ≥30 分钟，同时抓**两条**读数：
+   `[sync-metrics] … bytes=`（变更行）＋ `[sync-metrics-attach] … bytes=`（附件）；
 ② 用 `scripts/measure-sync-baseline.mjs` 的「公告扇出」「传输字节」两段做开/关对比：
    通过的样子：大包轮次之后的 1–3 轮，公告单播目标数下降，且**恢复 ≤30s**；
-③ 反例：saving 之后首轮仍变慢（说明 dirty 例外被破坏）／公告目标数不回落（衰减没生效）。
+③ 要验 4/8 档，必须造**两个**事件（缺一不成）：
+   (a) 一次 ≥4 MiB 的**正文**变化（大页面）；
+   (b) 一次**新**大附件（≥4 MiB，hash 必须是新的 —— 旧的已在本机，不会再产生下载字节）；
+④ 反例：saving 之后首轮仍变慢（dirty 例外被破坏）／公告目标数不回落（衰减没生效）／
+   只有 (a) 或只有 (b) 时档位不动（说明相加那步没接上）。
 ```
 
 ## 7. 回滚

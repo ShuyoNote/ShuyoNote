@@ -8623,6 +8623,19 @@ async fn download_one_attachment(
         who,
         started.elapsed().as_millis()
     );
+    // ⭐ F3-b（2026-11-25）：附件字节**单独一条读数** ＋ 并进「带宽自适应」的输入。
+    //   来由（真机实测）：`[sync-metrics] … bytes=` 只累加变更行，6 MiB 附件同步成功时
+    //   它全程最大只有 59 KB ⇒ 用 bytes 做带宽自适应会**永远看不见附件流量**。
+    //   ⛔ 不把附件并进 `bytes=`（那条读数有既有口径与历史）；这里另起一条 `attachment`。
+    if size > 0 {
+        eprintln!(
+            "[sync-metrics-attach] hash={} bytes={} ms={}",
+            &item.hash[..12.min(item.hash.len())],
+            size,
+            started.elapsed().as_millis()
+        );
+        crate::lan_bw::note_attachment_bytes(size as usize);
+    }
     Ok(size)
 }
 

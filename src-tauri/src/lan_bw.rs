@@ -15,19 +15,45 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 上一轮（任一空间 × 任一对端的 pull）搬了多少字节。0 = 还没量到过。
+/// 上一轮（任一空间 × 任一对端的 pull）搬了多少**变更行**字节。0 = 还没量到过。
 static LAST_ROUND_BYTES: AtomicU64 = AtomicU64::new(0);
 
-/// 上一次 pull 的传输量（字节）。`mesh.rs` 在打 `[sync-metrics] ... bytes=` 的同一处记一笔。
+/// 上一轮搬了多少**附件**字节。0 = 这轮没有附件。
+///
+/// ⚠️ 2026-11-25 真机实测：`[sync-metrics] … bytes=` **不包含附件**（它只累加变更行的
+/// payload+sealed，附件走 `/mesh/attachment` 另一条路）⇒ 6 MiB 附件同步成功时
+/// `bytes=` 全程最大只有 59 KB。所以附件字节必须**单独记**（新读数
+/// `[sync-metrics-attach]`），再由 [`take_round_fanout_every`] 与变更行字节相加 ——
+/// ⛔ 不改 `bytes=` 的既有口径（那条读数有它自己的用途与历史）。
+static LAST_ROUND_ATTACH_BYTES: AtomicU64 = AtomicU64::new(0);
+
+/// 上一次 pull 的变更行传输量（字节）。`mesh.rs` 在打 `[sync-metrics] ... bytes=` 的同一处记一笔。
 pub fn note_round_bytes(bytes: usize) {
     LAST_ROUND_BYTES.store(bytes as u64, Ordering::Relaxed);
 }
 
+/// 这一轮又搬回了多少**附件**字节（累加；一轮可能有多件）。`sync.rs` 在附件取回成功处记一笔。
+pub fn note_attachment_bytes(bytes: usize) {
+    if bytes == 0 {
+        return;
+    }
+    LAST_ROUND_ATTACH_BYTES.fetch_add(bytes as u64, Ordering::Relaxed);
+}
+
 /// 本轮公告对端单播的"每 N 轮一次"。**会消耗一次衰减**（读-改-写；调用点只有一个）。
+///
+/// 输入 = 变更行字节 ＋ 附件字节（两者都会衰减一半）。
 pub fn take_round_fanout_every() -> u64 {
-    let bytes = LAST_ROUND_BYTES.load(Ordering::Relaxed);
-    LAST_ROUND_BYTES.store(decayed_bytes(bytes), Ordering::Relaxed);
-    fanout_every_from_bytes(bytes)
+    let changes = LAST_ROUND_BYTES.load(Ordering::Relaxed);
+    let attach = LAST_ROUND_ATTACH_BYTES.load(Ordering::Relaxed);
+    LAST_ROUND_BYTES.store(decayed_bytes(changes), Ordering::Relaxed);
+    LAST_ROUND_ATTACH_BYTES.store(decayed_bytes(attach), Ordering::Relaxed);
+    fanout_every_from_bytes(total_round_bytes(changes, attach))
+}
+
+/// 一轮的"带宽"输入：变更行 ＋ 附件（饱和相加，不溢出）。
+pub fn total_round_bytes(changes: u64, attachments: u64) -> u64 {
+    changes.saturating_add(attachments)
 }
 
 /// 传输量 → 扇出档位。**越大越稀**；下限仍是 2（与 F3-a 的节流档一致）。
@@ -85,6 +111,25 @@ mod tests {
         assert_eq!(decayed_bytes(0), 0);
     }
 
+    #[test]
+    fn total_is_changes_plus_attachments_without_overflow() {
+        assert_eq!(total_round_bytes(0, 0), 0);
+        assert_eq!(total_round_bytes(59_379, 6_291_456), 6_350_835);
+        assert_eq!(total_round_bytes(u64::MAX, 1), u64::MAX);
+    }
+
+    /// ⭐ 2026-11-25 真机那条原样立成判据：**6 MiB 附件必须能把档位抬到 8**。
+    ///
+    /// 当时 `bytes=` 只有 59,379 B（附件不计入）⇒ 一直停在 2 档；补了附件读数之后，
+    /// 同一轮的真实输入 = 变更行 59,379 ＋ 附件 6,291,456 ⇒ 必须 ≥4 MiB ⇒ 8 档。
+    #[test]
+    fn a_six_mib_attachment_alone_lifts_the_gear_to_eight() {
+        let real_round = total_round_bytes(59_379, 6_291_456);
+        assert_eq!(fanout_every_from_bytes(real_round), 8);
+        // 反例：只看变更行的话，同一轮只有 2 档 —— 正是真机上观测到的那个"不触发"。
+        assert_eq!(fanout_every_from_bytes(59_379), 2);
+    }
+
     /// 衰减会把档位从 8 一路带回 2：字节数每轮减半，够几轮就落回低档。
     #[test]
     fn repeated_decay_returns_to_the_low_gear() {
@@ -126,6 +171,15 @@ mod tests {
         assert!(
             mesh.contains("note_round_bytes("),
             "must record the measured bytes next to [sync-metrics] bytes="
+        );
+        let sync = include_str!("sync.rs");
+        assert!(
+            sync.contains("note_attachment_bytes("),
+            "附件字节必须在附件取回成功处记一笔（否则输入永远看不见附件）"
+        );
+        assert!(
+            sync.contains("[sync-metrics-attach]"),
+            "附件字节要有一条**独立**读数（⛔ 不改 bytes= 的既有口径）"
         );
     }
 }
