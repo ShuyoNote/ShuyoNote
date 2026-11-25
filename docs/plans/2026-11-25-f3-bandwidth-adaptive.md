@@ -1,7 +1,7 @@
 # F3-b 带宽自适应（第一刀）—— 用 `[sync-metrics] bytes=` 决定公告扇出档位
 
-状态：**第一刀已接线（默认关；`SHUYONOTE_LAN_BW_ADAPT=1` 才生效）· 真机读数与拍板未做**
-证据：`src-tauri/src/lan_bw.rs`（纯函数 ＋ 6 条单测，含源码级接线判据）｜`src-tauri/src/lan_state.rs`｜`src-tauri/src/mesh.rs`
+状态：**接线已在真机验证；4/8 档未触发（输入看不见附件流量）⇒ 默认关、不启用，待补读数或改输入**
+证据：`src-tauri/src/lan_bw.rs`（纯函数 ＋ 6 条单测，含源码级接线判据）｜`src-tauri/src/lan_state.rs`｜`src-tauri/src/mesh.rs`｜真机读数见 §4.1
 上位：[2.x 快速路线](2026-11-22-sync2x-fast-roadmap.md) §2 W4 ｜ [需求 §13.3](2026-11-08-personal-sync-2.0-requirements.md) ｜ 同族：[F3-a 扇出节流](../../src-tauri/src/lan_fanout.rs)
 
 ## 0. 一句话
@@ -54,6 +54,30 @@
 · crate 级 `cargo check` / `cargo test`：Windows 上 rust 组跑不了（AGENTS §7）；
   本机只有 rustfmt 的**解析**（能挡语法错，挡不住类型错）；
 · 因此 `lan_state.rs` 那 5 行接线只做到「格式/语法干净 ＋ 源码级断言」，**类型检查交给 CI**。
+```
+
+## 4.1 真机读数（2026-11-25，Windows ⇄ AMD，`0220e287`）
+
+```text
+环境：两端都是 dev `0220e287`、`cargo build --features lan-quic`；共用空间 `SYNC2-TEST-20261109`（proto 1c02…）/
+      页 T-B（97f58b7a…）；AMD 侧 device 4b345a0a…，11:09–11:40 在线。
+读数（真日志：_tmp/logs/f3b/ON-20261125-1112.log、OFF-20261125-1121.log）：
+
+① 开关接线 —— **通过（真读数）**
+   关（不设 env）：每轮「公告：发出 7/7（目标 7：受限广播 3 ｜ 回环 3 ｜ 其它 **1**）」—— 每轮都发；
+   开（`SHUYONOTE_LAN_BW_ADAPT=1`）：同一对端下「其它」按轮 **0/1 交替**（every=2 档）；
+   两种情形「受限广播 3 ｜ 回环 3」**全程不变** ⇒ 只动了对端单播，没动发现。
+
+② 6 MiB 附件 —— **同步成功但没进 bytes（关键发现）**
+   AMD 放的 `f3b-6mb.bin`（6,291,456 B，hash b69dae56…）我这边**确实拿到了**
+   （space 984b0376… / page 97f58b7a… / attachment 22b9744b…，updated_at 11:12:20），
+   但 `[sync-metrics] … bytes=` 的最大值全程只有 **59,379 B** —— 因为该读数只累加**变更行**的
+   `payload+sealed`（`mesh.rs` 的 `fetched_bytes`），**附件字节走另一条路、不计入**。
+   ⇒ 这一刀的输入**看不见最大那类流量**（附件），只有"大变更批"才会触发 4/8 档。
+
+③ 4/8 档 —— **未触发、未验（⛔ 不许读成通过）**
+   窗口内没有 ≥512 KiB 的变更批 ⇒ 只观察到 2 档；要验 4/8 档需造一次 ~5 MB **正文**变化
+   （已请 AMD 造，窗口内未回）。**在拿到 4/8 档读数之前，这刀保持默认关、不启用。**
 ```
 
 ## 5. 明确不做（这一刀的边界）

@@ -371,7 +371,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-11-24-a1-g1-grayscale-plan.md](plans/2026-11-24-a1-g1-grayscale-plan.md) | ⭐ **A1 G1 灰度预案（待拍板）**：仅明文空间＋空间级开关默认关；7 天窗口前置、分批、每日判据、回滚边界 |
 | [plans/2026-11-24-2.1.17-release-checklist.md](plans/2026-11-24-2.1.17-release-checklist.md) | ⭐ **2.1.17 发版检查单（候选）**：A1 默认关/空间开关、F3/S1 默认关能力；前置、版本、Web zip、macOS、通道与回滚 |
 | [plans/2026-11-22-u3-u4-real-machine-sheets.md](plans/2026-11-22-u3-u4-real-machine-sheets.md) | ⭐ **U3/U4 片4 真机操作单（待执行）**：U4 块级同块冲突造法/读数/判据/留证；U3 60s 重试与 401 两条路径；止损与回滚 |
-| [plans/2026-11-25-f3-bandwidth-adaptive.md](plans/2026-11-25-f3-bandwidth-adaptive.md) | ⭐ **F3-b 带宽自适应第一刀（默认关）**：用 `[sync-metrics] bytes=` 决定公告扇出档位（2/4/8，每轮减半回落）；口径五条、档位表、本机/CI 分别验过什么、真机量法与回滚 |
+| [plans/2026-11-25-f3-bandwidth-adaptive.md](plans/2026-11-25-f3-bandwidth-adaptive.md) | ⭐ **F3-b 带宽自适应第一刀（默认关，不启用）**：用 `[sync-metrics] bytes=` 决定公告扇出档位（2/4/8，每轮减半回落）；口径五条、档位表、本机/CI 分别验过什么、**真机读数（接线过；附件不进 bytes ⇒ 4/8 档未触发）**、回滚 |
 | [plans/2026-11-08-personal-sync-2.0-p3-adr.md](plans/2026-11-08-personal-sync-2.0-p3-adr.md) | ⭐ **个人版同步 2.0 P3 落地 ADR（草案；DEC-A..E 已按推荐拍板 A）**：daemon 两段式/DB 单写者/回环 IPC/托盘/升级；lan-quic feature 拆分、单 iroh 端点、UDP 公告带 quic_addrs、HTTP 退出 C1–C4；CRDT 影子闸/space_uid/不首刀清单；MCP 无 UI 危险写三档；阶段判据、R1–R8 与不建议清单 |
 
 > ⚠️ **2026-09-29 追改**：上表里 [`keyring-step0-workorder`](plans/2026-09-23-keyring-step0-workorder.md) 那行末的
