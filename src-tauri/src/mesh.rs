@@ -2161,6 +2161,9 @@ async fn absorb_and_report(
                 fetched_bytes,
             )
         );
+        // ⭐ F3-b（2026-11-25，默认关）：把**同一轮**量到的字节记给公告扇出档位用
+        //    （`SHUYONOTE_LAN_BW_ADAPT` 不设 ⇒ 这里只是记一个读数，没人读它 ✓）。
+        crate::lan_bw::note_round_bytes(fetched_bytes);
         if let Ok(mut m) = round_health().lock() {
             let key = format!("{space_id}|{}", peer.device_id);
             let prev = m.get(&key).copied();

@@ -704,6 +704,17 @@ fn fanout_throttle_enabled() -> bool {
     })
 }
 
+/// ⭐ F3-b（2026-11-25）：带宽自适应开关（默认关）。
+static BW_ADAPT_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+fn bw_adapt_enabled() -> bool {
+    *BW_ADAPT_ENABLED.get_or_init(|| {
+        crate::lan_bw::bw_adapt_enabled_from(
+            std::env::var("SHUYONOTE_LAN_BW_ADAPT").ok().as_deref(),
+        )
+    })
+}
+
 fn heartbeat_wake_enabled() -> bool {
     *HEARTBEAT_WAKE_ENABLED.get_or_init(|| {
         crate::lan_heartbeat::wake_resync_enabled_from(
@@ -2541,8 +2552,20 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                 // ⭐ F3 P0：空闲轮次对端单播每 2 轮发一次；dirty/关闭时照旧。
                 announce_cycle = announce_cycle.wrapping_add(1);
                 let dirty_pending = ANNOUNCE_DIRTY_PENDING.load(Ordering::SeqCst);
-                let throttle_peers = fanout_throttle_enabled()
-                    && !crate::lan_fanout::peer_unicast_due(announce_cycle, dirty_pending, 2);
+                // ⭐ F3-b（2026-11-25，默认关）：上一轮传输量大 ⇒ 公告单播放得更稀（2→4→8）；
+                //    每取一次档位就衰减一半 ⇒ 传输量降下来自己回到 2。⛔ dirty 轮永远发。
+                let bw_adapt = bw_adapt_enabled();
+                let fanout_every = if bw_adapt {
+                    crate::lan_bw::take_round_fanout_every()
+                } else {
+                    2
+                };
+                let throttle_peers = (fanout_throttle_enabled() || bw_adapt)
+                    && !crate::lan_fanout::peer_unicast_due(
+                        announce_cycle,
+                        dirty_pending,
+                        fanout_every,
+                    );
                 let peers_now = state.peers(now);
                 let empty_peers = Vec::new();
                 let announce_peers = if throttle_peers {
