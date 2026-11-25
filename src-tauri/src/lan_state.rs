@@ -440,6 +440,36 @@ pub(crate) fn lan_change_fingerprint(peers: &[Peer], bases: &[(String, String)])
 mod lan_change_fingerprint_tests {
     use super::*;
 
+    /// ⭐ **2026-11-25（真机 S2 复测抓到的真因）**：清冷却必须用**裸 meta** 的表名 `sync_state`。
+    ///
+    /// 旧写法用限定名 `meta.sync_state` ⇒ 在裸 meta 连接上必然 `no such table` ⇒
+    /// "收到公告就清冷却"**一次都没成功过** ⇒ 网络恢复后仍被 3 轮/180 秒冷却挡住（真机 186 秒）。
+    /// 变异：改回 `meta.sync_state` ⇒ 本判据红（下面最后一条断言就是那个变异）。
+    #[test]
+    fn clearing_cooldowns_uses_the_bare_meta_table_name() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT INTO sync_state (key,value) VALUES
+               ('peer_cooldown:dev-a','3'), ('peer_misses:dev-a','2'), ('peer_cooldown:dev-b','5');",
+        )
+        .unwrap();
+        clear_cooldown_rows(&c, "peer_cooldown:dev-a", "peer_misses:dev-a").unwrap();
+        let get = |k: &str| -> String {
+            c.query_row("SELECT value FROM sync_state WHERE key = ?1", [k], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(get("peer_cooldown:dev-a"), "0");
+        assert_eq!(get("peer_misses:dev-a"), "0");
+        assert_eq!(get("peer_cooldown:dev-b"), "5", "⛔ 不许动别的设备");
+        // 旧写法（限定名）在裸 meta 上必然报错 —— 这就是真机日志里那条 `no such table`。
+        assert!(c
+            .execute("UPDATE meta.sync_state SET value='0'", [])
+            .is_err());
+    }
+
     fn peer(dev: &str, addr: &str, seen: i64) -> Peer {
         let mut a = crate::lan::announce_for_own_hub(
             dev,
@@ -1300,14 +1330,33 @@ pub fn clear_peer_cooldowns(peer_device: &str) {
     }
     let like_cd = format!("peer_cooldown:{peer_device}");
     let like_ms = format!("peer_misses:{peer_device}");
-    for like in [like_cd, like_ms] {
-        if let Err(e) = c.execute(
-            "UPDATE meta.sync_state SET value = '0' WHERE key LIKE ?1",
-            rusqlite::params![like],
-        ) {
-            eprintln!("[peer-cooldown] 清冷却失败（不影响收公告）：{e}");
-        }
+    // ⭐ **2026-11-25（真机 S2 复测抓到的真因）**：这里给的是**裸 meta 连接**，
+    //   表名必须是 `sync_state`（⛔ 不是 `meta.sync_state` ✗ —— 那个限定名只在"空间库＋ATTACH meta"
+    //   的连接上解析得动；在裸 meta 上必然 `no such table: meta.sync_state`）。
+    //   旧写法导致"收到公告就清冷却"**一次都没成功过**：网络恢复后对端仍被冷却按 3 轮/180 秒挡住，
+    //   真机实测恢复 **186 秒**（S2 判据是 ≤30s）。
+    if let Err(e) = clear_cooldown_rows(&c, &like_cd, &like_ms) {
+        eprintln!("[peer-cooldown] 清冷却失败（不影响收公告）：{e}");
     }
+}
+
+/// 把某台设备的冷却/连败计数清零（**纯 SQL 层，连接可注入 ⇒ 有判据**）。
+///
+/// ⚠️ `c` **必须是裸 meta 连接**（`open_meta_conn_at`）：表名就是 `sync_state`。
+/// 传给"空间库＋ATTACH meta"的连接也能跑（那里 `sync_state` 解析到空间自己那份 ✗）——
+/// 所以调用点只在 `clear_peer_cooldowns` 里。
+pub(crate) fn clear_cooldown_rows(
+    c: &rusqlite::Connection,
+    like_cd: &str,
+    like_ms: &str,
+) -> rusqlite::Result<()> {
+    for like in [like_cd, like_ms] {
+        c.execute(
+            "UPDATE sync_state SET value = '0' WHERE key LIKE ?1",
+            rusqlite::params![like],
+        )?;
+    }
+    Ok(())
 }
 
 /// ⭐ **F3-2**：连续失败计数与冷却窗的**键名**（都在 `meta.sync_state`；⛔ 不新开表）。
