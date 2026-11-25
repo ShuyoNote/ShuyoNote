@@ -4036,6 +4036,26 @@ pub fn local_addrs_named() -> Vec<(String, IpAddr)> {
     }
 }
 
+/// ⭐ **2026-11-25**：带**链路状态**的地址采样 —— 只给 netwatch 用。
+///
+/// 真机来由（S2 复测）：拔网线时 Windows **保留**已分配的 IPv4 ⇒ 地址集合不变 ⇒
+/// [`local_addrs_named`](self::local_addrs_named) 的指纹**看不见"线断了"**。把 `is_up`
+/// 一起带出来，指纹就能反映"这条链路还在不在"。
+///
+/// ⚠️ **不改已有语义**：公告/选址仍走 [`local_addrs_named`]（⛔ 不动 announce 行为）。
+pub fn local_addrs_named_with_link() -> Vec<(String, IpAddr, bool)> {
+    match if_addrs::get_if_addrs() {
+        Ok(ifs) => ifs
+            .into_iter()
+            .map(|i| {
+                let up = i.is_oper_up();
+                (i.name, i.addr.ip(), up)
+            })
+            .collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
 /// ⭐ **P3-2a 地址质量（只读入口）**：给一组 `(网卡名, IP)` 按 [`lan_rank_key`] **排序＋按 IP 去重**。
 ///
 /// ⚠️ **纯函数**：不枚举系统、不过滤（loopback/unspecified 的取舍留给调用方）、

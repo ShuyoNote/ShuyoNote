@@ -2322,7 +2322,10 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
             if netwatch_enabled() {
                 netwatch_tick += 1;
                 if netwatch_tick % 2 == 0 {
-                    let fp = crate::lan_netwatch::fingerprint(&crate::mesh::local_addrs_named());
+                    // ⭐ 2026-11-25：采样带**链路状态** —— 拔网线时 IP 不释放，只看地址会瞎。
+                    let fp = crate::lan_netwatch::fingerprint_with_link(
+                        &crate::mesh::local_addrs_named_with_link(),
+                    );
                     // ⭐ 2026-11-25：去抖那三支从内联代码收进纯函数（`debounce_step`）⇒ 有判据了。
                     let (next_prev, next_pending, changed) = crate::lan_netwatch::debounce_step(
                         netwatch_prev.as_deref(),

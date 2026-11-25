@@ -51,6 +51,23 @@ pub fn is_change(prev: Option<&str>, next: &str) -> bool {
     }
 }
 
+/// ⭐ **2026-11-25**：带**链路状态**的指纹 —— 只算"链路 up"的那些地址。
+///
+/// 真机来由（S2 复测）：拔网线时 Windows **保留** IP ⇒ 只看地址集合的 [`fingerprint`]
+/// **看不见"线断了"**（那次 netwatch 一条都没出）。把 `up` 位并进指纹后，
+/// 「线拔了/插回」与「换 Wi‑Fi（地址变）」**两类事件都能触发重播**。
+///
+/// 口径：`up == false` 的条目**整条丢弃**（连它的地址都不进指纹）⇒ 链路一断，
+/// 指纹必然少一条 ⇒ 变化成立。⛔ 不引入任何新状态、⛔ 不改 [`fingerprint`] 的语义。
+pub fn fingerprint_with_link(addrs: &[(String, IpAddr, bool)]) -> String {
+    let up_only: Vec<AddrSample> = addrs
+        .iter()
+        .filter(|(_, _, up)| *up)
+        .map(|(name, ip, _)| (name.clone(), *ip))
+        .collect();
+    fingerprint(&up_only)
+}
+
 /// 强制重播是否到点：没有强制点 ⇒ false；已有强制点且距上次公告 ≥ `min_gap_ms` ⇒ true。
 ///
 /// ⚠️ 调用方在**成功发出广播**之后必须把强制点清零（否则每拍都会重播）。
@@ -157,6 +174,55 @@ mod tests {
     fn fingerprint_empty_is_none_not_empty_string() {
         assert_eq!(fingerprint(&[]), "none");
         assert_eq!(fingerprint(&[a("lo", "127.0.0.1")]), "none");
+    }
+
+    /// ⭐ 2026-11-25（真机 S2 复测的盲区）：**链路 down 的地址不进指纹** ⇒
+    /// 拔网线（Windows 保留 IP）也能被看见。变异：不过滤 `up` ⇒ 两条断言红。
+    #[test]
+    fn link_state_is_part_of_the_fingerprint() {
+        let all_up = vec![
+            (
+                "eth0".to_string(),
+                "192.168.1.5".parse::<IpAddr>().unwrap(),
+                true,
+            ),
+            (
+                "wlan0".to_string(),
+                "192.168.1.9".parse::<IpAddr>().unwrap(),
+                true,
+            ),
+        ];
+        let eth_down = vec![
+            (
+                "eth0".to_string(),
+                "192.168.1.5".parse::<IpAddr>().unwrap(),
+                false,
+            ),
+            (
+                "wlan0".to_string(),
+                "192.168.1.9".parse::<IpAddr>().unwrap(),
+                true,
+            ),
+        ];
+        assert_ne!(
+            fingerprint_with_link(&all_up),
+            fingerprint_with_link(&eth_down),
+            "链路一断，指纹必须变（否则拔网线永远看不见）"
+        );
+        assert!(
+            !fingerprint_with_link(&eth_down).contains("192.168.1.5"),
+            "down 的地址不许留在指纹里"
+        );
+        assert_eq!(fingerprint_with_link(&[]), "none");
+        // 老口径（只看地址）在这两态之间**看不出差别** —— 这正是当时漏掉的那一格。
+        let addrs_of = |v: &[(String, IpAddr, bool)]| -> Vec<AddrSample> {
+            v.iter().map(|(n, ip, _)| (n.clone(), *ip)).collect()
+        };
+        assert_eq!(
+            fingerprint(&addrs_of(&all_up)),
+            fingerprint(&addrs_of(&eth_down)),
+            "反例：不带链路状态就分不出来"
+        );
     }
 
     #[test]
