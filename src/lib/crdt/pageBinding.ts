@@ -141,6 +141,37 @@ export function hasAnyText(json: string): boolean {
   }
 }
 
+/** 把编辑器 JSON 里的正文按顺序拼成一个串（只用于**比较**两份内容是否一样）。 */
+export function plainTextOfJson(json: string): string | null {
+  const out: string[] = [];
+  const walk = (v: unknown) => {
+    if (Array.isArray(v)) {
+      v.forEach(walk);
+      return;
+    }
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      if (typeof o.text === "string") out.push(o.text);
+      for (const k of Object.values(o)) walk(k);
+    }
+  };
+  try {
+    walk(JSON.parse(json));
+    return out.join("\n");
+  } catch {
+    return null;
+  }
+}
+
+/** 一份 CRDT 状态的正文串（投影再取文本；解不开 ⇒ null）。 */
+export function plainTextOfState(state: Uint8Array): string | null {
+  try {
+    return plainTextOfJson(projectStateToJson(state));
+  } catch {
+    return null;
+  }
+}
+
 // =====================================================================================
 // S4a：**远端来的状态怎么并进本机**（"真正的合并同步"在客户端这一侧的唯一入口）
 //
@@ -524,12 +555,27 @@ export async function bindPageToEditorViaPort(opts: {
         );
       }
     }
+    const a1Enabled0 = opts.a1Enabled ?? a1AutoMergeEnabled();
+    if (base && !a1Enabled0 && hasAnyText(seedJson)) {
+      const stateText = plainTextOfState(base);
+      const seedText = plainTextOfJson(seedJson);
+      if (stateText !== null && seedText !== null && stateText !== seedText) {
+        try {
+          const rebuilt = openPageSession({ json: seedJson }).exportState();
+          await port.save(pageId, rebuilt);
+          base = rebuilt;
+          console.warn("[pageBinding] 影子模式（A1 关）：状态投影≠正文 ⇒ 用正文重播状态 page=" + pageId);
+        } catch (e) {
+          console.warn("[pageBinding] 影子模式重播失败（保留旧状态）page=" + pageId, e);
+        }
+      }
+    }
     const session = openPageSession({ state: base, editor });
     let ids = lineageClientIds(base);
     let merged = false;
     let skipped = 0;
     let deferred = 0;
-    const a1Enabled = opts.a1Enabled ?? a1AutoMergeEnabled();
+    const a1Enabled = a1Enabled0;
     for (const p of pendingToMerge) {
       const remoteIds = lineageClientIds(p.state);
       // ★ 与 `mergeRemotePageState` **同一条护栏**（复用同一对纯函数，不另写一份判定）：
