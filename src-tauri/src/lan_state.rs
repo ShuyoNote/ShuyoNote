@@ -907,9 +907,9 @@ fn heartbeat_enabled() -> bool {
             "[{}] [heartbeat] 判定：{}（env=SHUYONOTE_LAN_HEARTBEAT）",
             crate::lan::log_stamp(),
             if on {
-                "**已开**：后台轮基础间隔按最近保存分 10s/60s"
+                "**已开**（默认）：后台轮基础间隔按最近保存分 10s/60s"
             } else {
-                "关：沿用 task-12 的 120s/60s"
+                "关（显式 0/false/off）：沿用 task-12 的 120s/60s"
             }
         );
         on

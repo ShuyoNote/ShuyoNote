@@ -75,11 +75,17 @@ pub fn wake_resync_enabled_from(value: Option<&str>) -> bool {
     )
 }
 
-/// ⭐ **S1 接线（2026-11-25）**：心跳策略的开关（默认关）。
+/// ⭐ **S1 接线（2026-11-25 接线，2026-11-26 owner 拍「默认开」）**：心跳策略开关。
+///
+/// 口径变了（与 `wake_resync_enabled_from` 那类"默认关"的开关**相反**）：
+/// * **不设 / 空串 / 认不出的值 ⇒ 开**（owner 2026-11-26 拍：改完东西 10 秒内对端可见，值这个电）；
+/// * **只有显式 `0` / `false` / `off` / `no` 才关**（想回老样子 120s 轮就设它）。
+///
+/// ⚠️ 关掉之后逐字节回到 task-12 的 120s/60s（`background_round_interval_ms`）。
 pub fn heartbeat_enabled_from(value: Option<&str>) -> bool {
-    matches!(
+    !matches!(
         value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true") | Some("on")
+        Some("0") | Some("false") | Some("off") | Some("no")
     )
 }
 
@@ -169,11 +175,25 @@ mod tests {
             !recent_activity(9_000, 1_000, w),
             "时钟回拨 ⇒ 不算（⛔ 别读成刚刚活动）"
         );
-        for v in [Some("1"), Some("true"), Some("ON"), Some("on ")] {
-            assert!(heartbeat_enabled_from(v), "应打开：{v:?}");
+        for v in [
+            None,
+            Some(""),
+            Some("1"),
+            Some("true"),
+            Some("ON"),
+            Some("on "),
+            Some("随便什么"),
+        ] {
+            assert!(heartbeat_enabled_from(v), "不设/显式开/认不出 ⇒ 开：{v:?}");
         }
-        for v in [None, Some("0"), Some("false"), Some("off"), Some("")] {
-            assert!(!heartbeat_enabled_from(v), "应关闭：{v:?}");
+        for v in [
+            Some("0"),
+            Some("false"),
+            Some("OFF"),
+            Some("no"),
+            Some(" off "),
+        ] {
+            assert!(!heartbeat_enabled_from(v), "只有显式关才关：{v:?}");
         }
     }
 
