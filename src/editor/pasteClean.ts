@@ -63,3 +63,28 @@ export function cleanPastedCodeHtml(html: string): string | null {
   }
   return changed ? doc.body.innerHTML : null;
 }
+
+/**
+ * ⭐ **2026-11-26（owner 截图：粘进来的代码块出现**两列行号**）**：
+ * 从剪贴板 HTML 里取出**第一个 `<pre>`** 的代码文本与语言 —— 粘贴时由我们自己造**一个**代码块，
+ * ⛔ 不再走 `$generateNodesFromDOM` 的 `<pre>` 导入。
+ *
+ * 为什么：那条导入路径会把 `<pre><code>…</code></pre>` 导成 **`code > code`（代码块里套代码块）**，
+ * 而 `CodeBlockToolbar` 按元素各画一列行号 ⇒ 两列（真机截图 + 库里 `code > code` 双证）。
+ *
+ * 口径：文本 = 第一个 pre 的 textContent（先过行号清理）；语言取 `data-language`
+ * （没有就 `plain`，交给高亮层按 plain 处理）。**没有 pre ⇒ null**（调用方不接管）。
+ */
+export function codePasteFromHtml(html: string): { text: string; language: string } | null {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const pre = doc.querySelector("pre");
+  if (!pre) return null;
+  const raw = pre.textContent ?? "";
+  const text = stripPastedCodeLineNumbers(raw);
+  const language =
+    pre.getAttribute("data-language") ??
+    pre.querySelector("code")?.getAttribute("data-language") ??
+    pre.getAttribute("class")?.match(/language-([\w-]+)/)?.[1] ??
+    "plain";
+  return { text: text.replace(/\r\n?/g, "\n"), language };
+}

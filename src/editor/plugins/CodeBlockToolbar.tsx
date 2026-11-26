@@ -37,6 +37,9 @@ export function CodeBlockToolbar() {
     const out: Item[] = [];
     root.querySelectorAll(".editor-codeblock").forEach((el, i) => {
       if (!(el instanceof HTMLElement)) return;
+      // ⭐ 2026-11-26：**嵌套的代码块不画行号栏**（外层已有一列；嵌套那两个各画一列 = 两列行号）。
+      //   结构上的嵌套由 `NestedCodeFlattenPlugin` 拍平；这里是防御（历史数据/极端粘贴）。
+      if (el.parentElement?.closest(".editor-codeblock")) return;
       const rect = el.getBoundingClientRect();
       const text = el.innerText ?? el.textContent ?? "";
       // 空内容(仅换行/空白)算 1 行；否则按换行数。
