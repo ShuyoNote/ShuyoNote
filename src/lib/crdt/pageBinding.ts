@@ -433,6 +433,15 @@ export interface AsyncPageBinding {
  * ⚠️ 与 `ensurePageCrdtState` 同一个已知限制：两台设备**同时**首开一张从没建过血统的页、且各自
  * 离线时，两条血统仍可能各自被建出来 ⇒ 彻底解法在 S5（服务端拒绝/收敛第二条血统）。
  */
+/** 一份 CRDT 状态里有没有一个字的正文（⛔ 用投影判断，不碰字节格式；解不开 ⇒ 当作没有）。 */
+export function stateHasAnyText(state: Uint8Array): boolean {
+  try {
+    return hasAnyText(projectStateToJson(state));
+  } catch {
+    return false;
+  }
+}
+
 export async function bindPageToEditorViaPort(opts: {
   port: PageStatePort;
   pageId: string;
@@ -446,8 +455,50 @@ export async function bindPageToEditorViaPort(opts: {
   a1Enabled?: boolean;
 }): Promise<AsyncPageBinding> {
   const { port, pageId, editor, seedJson } = opts;
-  const state = await port.read(pageId);
+  const state0 = await port.read(pageId);
   const pending = (await port.readPending?.(pageId)) ?? [];
+
+  // ⭐ **2026-11-26（真机第二次复现，生产路径就是这一条）**：**空状态不许用来水合编辑器**。
+  //
+  // 真机现场（AMD，dev `7057ee5d`）：验证页 `U4-VERIFY-1530` 落盘正文 1706B、CRDT 状态 89B（空 root）；
+  // 打开页面走的是**本函数**（不是 `loadJsonForEditor`）⇒ 用空状态水合 ⇒ 编辑器空 ⇒ 保存写回空投影
+  // ⇒ 1706B → 243B，并记了一条**空 upsert**（还会反推给对端）。
+  //
+  // 口径（与 Rust `doc_content::write_page_projection` 的守卫、`loadJsonForEditor` 的同一口径）：
+  //   · 读到状态 ∧ 状态里**一个字都没有** ∧ `seedJson`（落盘正文）**有字**
+  //   ⇒ 用落盘正文**重建**状态并落盘，再用它当 base；
+  //   · 重建失败 ⇒ **退到"从正文新建会话"**（宁可新建血统，也不让空状态把正文清掉）。
+  let state = state0;
+  if (state && hasAnyText(seedJson) && !stateHasAnyText(state)) {
+    try {
+      const rebuilt = openPageSession({ json: seedJson }).exportState();
+      await port.save(pageId, rebuilt);
+      state = rebuilt;
+      console.warn(
+        `[pageBinding] 空 CRDT 状态已用落盘正文重建（⛔ 不用空状态水合）：page=${pageId}`,
+      );
+    } catch (e) {
+      console.warn(
+        `[pageBinding] 空状态重建失败 ⇒ 退到"从正文新建会话"（⛔ 不用空状态水合）：page=${pageId}`,
+        e,
+      );
+      const session = openPageSession({ json: seedJson, editor });
+      await port.save(pageId, session.exportState());
+      return {
+        session,
+        seeded: true,
+        adopted: false,
+        pendingSkipped: 0,
+        pendingDeferred: 0,
+        async persist() {
+          await port.save(pageId, session.exportState());
+        },
+        dispose() {
+          session.dispose();
+        },
+      };
+    }
+  }
 
   // ★★ §11.4 收口（第 42 轮）：**先把收下的远端状态并掉，再谈建不建血统**。
   //   顺序很重要：本机已有状态 ⇒ 在它上面继续；本机没有但收下了对端的 ⇒ **承接对端那条血统**

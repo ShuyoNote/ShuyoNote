@@ -203,7 +203,28 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     expect(hasAnyText(projectStateToJson(st!))).toBe(true);
   });
 
-  it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {    const store = new Map<string, Uint8Array>();
+  it("⑬c 端口版（**生产路径**）：空状态 + 非空落盘正文 ⇒ 用正文重建，⛔ 不用空状态水合（真机第二次复现）", async () => {
+    const store = new Map<string, Uint8Array>();
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, state: Uint8Array) => {
+        store.set(id, state);
+        return null;
+      },
+    };
+    // 真机现场同形：状态是空 root（89B），落盘正文非空
+    store.set("p1", Y.encodeStateAsUpdate(new Y.Doc()));
+    const e = appEditor(BASE);
+    const b = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e, seedJson: serialize(e) });
+    // 编辑器里必须有正文 —— 否则用户一保存就把正文清空（AMD 真机就是这样丢的）
+    expect(hasAnyText(serialize(e))).toBe(true);
+    // 落盘状态也必须非空（下次打开不再用空状态水合）
+    expect(hasAnyText(projectStateToJson(store.get("p1")!))).toBe(true);
+    b.dispose();
+  });
+
+  it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {
+    const store = new Map<string, Uint8Array>();
     const port = {
       read: async (id: string) => store.get(id) ?? null,
       save: async (id: string, state: Uint8Array) => {
