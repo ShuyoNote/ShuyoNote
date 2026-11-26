@@ -255,6 +255,32 @@ pub fn refresh_page_text_if_stale(
 /// ⇒ 这一步只有桌面需要）；**正文文本那一半仍然只打「待重建」标记** —— 正文要编辑器语义，
 /// 补算器在打开页面时算（`refresh_page_text_if_stale`）。⇒ "依赖正文的引用（`[[标题]]`）"仍可能
 /// 滞后到补算器跑完；**块级引用（来自 JSON）当场就对**。
+/// ⭐ **2026-11-26**：这份投影里**有没有一个字的正文**（纯函数 ⇒ 判据够得着）。
+///
+/// 用途：`write_page_projection` 的"空投影不许覆盖非空正文"守卫（见那处的真实现场）。
+/// 口径：递归找 `text` 字段，**trim 后非空**就算有；解析不了 ⇒ `false`（拿不准就当"没有"，
+/// 配合"库里正文非空才拦"的与门，最坏结果只是不覆盖 —— 不会误删）。
+pub fn projection_has_text(json: &str) -> bool {
+    fn walk(v: &serde_json::Value) -> bool {
+        match v {
+            serde_json::Value::Object(m) => {
+                if let Some(t) = m.get("text").and_then(serde_json::Value::as_str) {
+                    if !t.trim().is_empty() {
+                        return true;
+                    }
+                }
+                m.values().any(walk)
+            }
+            serde_json::Value::Array(a) => a.iter().any(walk),
+            _ => false,
+        }
+    }
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(v) => walk(&v),
+        Err(_) => false,
+    }
+}
+
 pub fn write_page_projection(c: &Connection, page_id: &str, json: &str) -> Result<bool, String> {
     let row: Option<(String, String, String)> = c
         .query_row(
@@ -272,6 +298,26 @@ pub fn write_page_projection(c: &Connection, page_id: &str, json: &str) -> Resul
     }
     if cur_json == json {
         return Ok(false); // ②
+    }
+    // ⭐ **2026-11-26（U4 前置抓到的真缺陷）**：**不许用"空投影"覆盖非空正文**。
+    //
+    // 现场（两台同 dev `743d328c`）：B 先收到"只有标题"的那笔 ⇒ 它的 `page_crdt` 是空 root（89B）；
+    // A 之后写入正文（payload 里**带** `crdt_state`，但那要等"打开页面"才由 TS 侧合并）；
+    // B **重启 app** ⇒ 用空 CRDT 投影覆盖 `content_json`（243B 空页根），还把它记成自己的一笔 upsert
+    // ⇒ 空页成了"最新版本"，还会反推回 A。**正文就这么没了。**
+    //
+    // 守卫口径（保守，只拦"全空"这一种）：
+    //   · 新投影里**一个字的正文都没有**（`projection_has_text` = false） **且**
+    //   · 库里的正文列**非空**（`cur_text` trim 后不空）
+    //   ⇒ **不写**，置 `text_stale`（让人知道这页待重建），并留一行日志（⛔ 不静默）。
+    // ⚠️ 反例（故意放行）：库里正文本来就是空、对端投影也空 ⇒ 照常走（那是正常的清空/新建）。
+    if !projection_has_text(json) && !cur_text.trim().is_empty() {
+        eprintln!(
+            "[projection] ⛔ 拒绝用**空投影**覆盖非空正文：page={page_id} ｜ 库里正文 {} 字符 ｜ 已置 text_stale（等重建/人工确认）",
+            cur_text.chars().count()
+        );
+        mark_text_stale(c, page_id)?;
+        return Ok(false);
     }
     c.execute(
         "UPDATE pages SET content_json = ?1 WHERE id = ?2",
@@ -1583,6 +1629,61 @@ pub fn take_remote_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⭐ **2026-11-26（U4 前置真缺陷）**：空投影 vs 有正文的判定。
+    #[test]
+    fn projection_has_text_distinguishes_empty_from_text() {
+        let empty = r#"{"root":{"children":[{"children":[],"text":"","type":"paragraph","version":1,"blockId":"empty-page"}]}}"#;
+        assert!(!projection_has_text(empty), "空页根 ⇒ 没有正文");
+        let with_text = r#"{"root":{"children":[{"children":[{"text":"第一行","type":"text"}],"type":"paragraph"}]}}"#;
+        assert!(projection_has_text(with_text), "有字 ⇒ 有正文");
+        assert!(!projection_has_text(r#"{"root":{"children":[]}}"#));
+        assert!(!projection_has_text("not json"), "解析不了 ⇒ 当作没有");
+        assert!(
+            !projection_has_text(r#"{"root":{"children":[{"text":"   "}]}}"#),
+            "全空白不算"
+        );
+    }
+
+    /// ⭐ **2026-11-26**：**空投影不许覆盖非空正文** —— 真机现场是 B 重启后用空 CRDT 投影
+    /// 把正文清成空页根（243B），还记成自己一笔 upsert。
+    /// 变异：删掉 `write_page_projection` 里那段守卫 ⇒ 本判据红（content_json 被改成空）。
+    #[test]
+    fn empty_projection_must_not_clobber_non_empty_text() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch(
+            "CREATE TABLE pages (
+               id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT '',
+               content_json TEXT NOT NULL DEFAULT '', content_text TEXT NOT NULL DEFAULT '',
+               kind TEXT NOT NULL DEFAULT 'page', text_stale INTEGER NOT NULL DEFAULT 0,
+               deleted_at INTEGER
+             );",
+        )
+        .unwrap();
+        let good = r#"{"root":{"children":[{"children":[{"text":"第一行","type":"text"}],"type":"paragraph"}]}}"#;
+        c.execute(
+            "INSERT INTO pages (id, content_json, content_text) VALUES ('p1', ?1, '第一行')",
+            rusqlite::params![good],
+        )
+        .unwrap();
+        let empty = r#"{"root":{"children":[{"children":[],"text":"","type":"paragraph","blockId":"empty-page"}]}}"#;
+        assert!(
+            !write_page_projection(&c, "p1", empty).unwrap(),
+            "空投影必须被拒"
+        );
+        let after: String = c
+            .query_row("SELECT content_json FROM pages WHERE id='p1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(after, good, "正文必须一字不动地保留");
+        let stale: i64 = c
+            .query_row("SELECT text_stale FROM pages WHERE id='p1'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(stale, 1, "必须置 text_stale，让人看得见这页待重建");
+    }
 
     fn st(seq: i64, dirty: i64) -> Option<LocalState> {
         Some(LocalState { seq, dirty })
