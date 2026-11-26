@@ -1887,7 +1887,7 @@ export function SyncPanel({ contentOnly = false }: { contentOnly?: boolean } = {
               </span>
               <span className="sync-overview-cell">
                 <b data-testid="sync-overview-next">{overviewNextAuto}</b>
-                <i>下次自动（约 2 分钟一轮）</i>
+                <i>下次自动（空闲约 1 分钟，编辑后更快）</i>
               </span>
               <span className="sync-overview-cell">
                 <b data-testid="sync-overview-syncing">{overviewSyncing ? "同步中" : "空闲"}</b>
