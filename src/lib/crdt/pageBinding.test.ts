@@ -90,6 +90,9 @@ const BASE = withIds(
  * ⚠️ 第一版这里**漏了** `toModelDoc` ⇒ 编辑器里是内置 `paragraph`（不带 `blockId`）⇒ 序列化出去缺身份
  * ⇒ 判据当场红。这一步不是可选的：**落盘形态与编辑器形态不是同一个形态**。
  */
+const EMPTY =
+  '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-empty","children":[]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
+
 function appEditor(json: string): LexicalEditor {
   const editor = createEditor({ nodes: EDITOR_NODES, namespace: "app-like-editor" });
   const modeled = toModelDoc(json, () => {
@@ -219,6 +222,34 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     // 编辑器里必须有正文 —— 否则用户一保存就把正文清空（AMD 真机就是这样丢的）
     expect(hasAnyText(serialize(e))).toBe(true);
     // 落盘状态也必须非空（下次打开不再用空状态水合）
+    expect(hasAnyText(projectStateToJson(store.get("p1")!))).toBe(true);
+    b.dispose();
+  });
+
+  it("⑬d 空状态 + 有正文的 pending ⇒ 承接对端状态当基座（A1 关也要用；第三次真机复现）", async () => {
+    const store = new Map<string, Uint8Array>();
+    // 真机同形：本机 state 是空 root，对端那版躺在 page_crdt_pending 里（8 条、最新 567B）
+    store.set("p1", Y.encodeStateAsUpdate(new Y.Doc()));
+    const withText = openPageSession({ json: BASE }).exportState();
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, s: Uint8Array) => {
+        store.set(id, s);
+        return null;
+      },
+      readPending: async () => [{ seq: 1, state: withText }],
+      clearPending: async () => {},
+    };
+    const e = appEditor(EMPTY);
+    // ⚠️ a1Enabled: false —— A1 默认关时也必须承接（否则编辑器拿空基座水合 ⇒ 保存写空）
+    const b = await bindPageToEditorViaPort({
+      port,
+      pageId: "p1",
+      editor: e,
+      seedJson: serialize(e),
+      a1Enabled: false,
+    });
+    expect(hasAnyText(serialize(e))).toBe(true);
     expect(hasAnyText(projectStateToJson(store.get("p1")!))).toBe(true);
     b.dispose();
   });

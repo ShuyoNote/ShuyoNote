@@ -505,14 +505,32 @@ export async function bindPageToEditorViaPort(opts: {
   //   （这正是 `bootstrap.ts` 里 `wait-for-remote` 想要的"等它同步下来"）—— 两者都**不 claim**。
   if (state || pending.length > 0) {
     // 起点：本机状态优先；没有就取**最旧**那条待并状态（它自带对端的血统）。
-    const base = state ?? pending[0].state;
+    // ⭐ **2026-11-26（第三次真机复现，AMD 的 `page_crdt_pending` 有 8 条、投影仍空）**：
+    //   本机状态存在但**一个字都没有**、而对端有几条**带正文**的待并状态时，
+    //   那个空状态**不能当基座**（A1 默认关 ⇒ pending 只会被"延后合并"⇒ 编辑器拿空基座水合 ⇒ 保存写空）。
+    //   口径：**空基座 ⇒ 直接改用最新一条带正文的 pending 当基座**（这是"承接"不是"合并"，
+    //   ⛔ 不受 A1 开关约束）；被承接的那条从待并列表里摘掉，避免再并一遍。
+    let base = state ?? pending[0].state;
+    let pendingToMerge = state ? pending : pending.slice(1);
+    let adoptedBase = false;
+    if (state && !stateHasAnyText(state)) {
+      const withText = [...pending].reverse().find((p) => stateHasAnyText(p.state));
+      if (withText) {
+        base = withText.state;
+        pendingToMerge = pending.filter((p) => p !== withText);
+        adoptedBase = true;
+        console.warn(
+          `[pageBinding] 本机状态为空 ⇒ 承接对端带正文的状态当基座（⛔ 不用空状态水合）：page=${pageId} seq=${withText.seq}`,
+        );
+      }
+    }
     const session = openPageSession({ state: base, editor });
     let ids = lineageClientIds(base);
     let merged = false;
     let skipped = 0;
     let deferred = 0;
     const a1Enabled = opts.a1Enabled ?? a1AutoMergeEnabled();
-    for (const p of state ? pending : pending.slice(1)) {
+    for (const p of pendingToMerge) {
       const remoteIds = lineageClientIds(p.state);
       // ★ 与 `mergeRemotePageState` **同一条护栏**（复用同一对纯函数，不另写一份判定）：
       //   两条**独立创建**的血统不许合（合了就是 S1 那个"一块变两块"）⇒ 拒绝并**留痕**。
@@ -551,7 +569,7 @@ export async function bindPageToEditorViaPort(opts: {
       ids = new Set([...ids, ...remoteIds]);
     }
     // 只有**动过**才回写（与 `mergeRemotePageState` 同一纪律：没变就一次写库都不做）
-    if (merged || state === null) {
+    if (merged || state === null || adoptedBase) {
       await port.save(pageId, session.exportState());
     }
     // ★ 冲刺 §13.3 第 1 条（第 49 轮）：**投影也要跟上**，否则反链/插件/AI/导出要等下一次保存
@@ -565,7 +583,7 @@ export async function bindPageToEditorViaPort(opts: {
     if (pending.length > 0) {
       const baseJson = projectStateToJson(base);
       const mergedJson = projectStateToJson(session.exportState());
-      if (state === null || mergedJson !== baseJson) {
+      if (state === null || adoptedBase || mergedJson !== baseJson) {
         try {
           await port.writeProjection?.(pageId, mergedJson);
         } catch (e) {
@@ -583,7 +601,7 @@ export async function bindPageToEditorViaPort(opts: {
     return {
       session,
       seeded: false,
-      adopted: state === null,
+      adopted: state === null || adoptedBase,
       pendingSkipped: skipped,
       pendingDeferred: deferred,
       async persist() {
