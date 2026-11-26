@@ -281,6 +281,37 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     b.dispose();
   });
 
+  it("⑬f 影子模式（A1 关）：血统分叉 + 对端正文不同 ⇒ **整份承接**（替换本机状态，不合并；第五次真机）", async () => {
+    const OLD =
+      '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-old","children":[{"type":"text","text":"旧内容","version":1}]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
+    // 两条**独立**血统：各自 new Y.Doc ⇒ clientID 不同
+    const localState = openPageSession({ json: OLD }).exportState();
+    const remoteState = openPageSession({ json: BASE }).exportState();
+    const store = new Map<string, Uint8Array>([["p1", localState]]);
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, s: Uint8Array) => {
+        store.set(id, s);
+        return null;
+      },
+      readPending: async () => [{ seq: 1, state: remoteState }],
+      clearPending: async () => {},
+    };
+    // seedJson = 本地正文（838 那种"本机旧内容"），不能靠它救场，只能靠承接 pending
+    const e = appEditor(OLD);
+    const b = await bindPageToEditorViaPort({
+      port,
+      pageId: "p1",
+      editor: e,
+      seedJson: OLD,
+      a1Enabled: false,
+    });
+    const text = serialize(e);
+    expect(text).toContain("第一段");
+    expect(text).not.toContain("旧内容");
+    b.dispose();
+  });
+
   it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {
     const store = new Map<string, Uint8Array>();
     const port = {

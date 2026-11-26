@@ -556,7 +556,28 @@ export async function bindPageToEditorViaPort(opts: {
       }
     }
     const a1Enabled0 = opts.a1Enabled ?? a1AutoMergeEnabled();
-    if (base && !a1Enabled0 && hasAnyText(seedJson)) {
+    // ⭐ **2026-11-26（第五次真机：血统分叉 ⇒ 护栏留本机 ⇒ 页面永远不同步；owner 拍「A」）**：
+    //   **影子模式（A1 关）下，血统不同但内容不同的对端版本 ⇒ 整份承接（替换本机状态，⛔ 不合并）**。
+    //   为什么不合并：两条独立血统合起来会出现"一块变两块"（S1 老事故）；而"整份替换"没有那个风险。
+    //   为什么只在该模式做：A1 开时的语义是"状态权威 + 真合并"，拒绝是**正确**的（留给人裁决）。
+    //   ⚠️ 仍只在"对端正文与本地正文不同"时才动（两边一样 ⇒ 什么都没发生）。
+    if (state && !a1Enabled0) {
+      const localText = plainTextOfState(state) ?? "";
+      for (const p of [...pending].reverse()) {
+        const remoteText = plainTextOfState(p.state);
+        if (remoteText === null || remoteText === localText) continue;
+        if (lineagesRelated(lineageClientIds(state), lineageClientIds(p.state))) break; // 同血统 ⇒ 走正常合并
+        base = p.state;
+        pendingToMerge = pending.filter((x) => x !== p);
+        adoptedBase = true;
+        console.warn(
+          `[pageBinding] 影子模式（A1 关）：血统分叉且对端正文不同 ⇒ **整份承接**（替换本机状态，不合并）page=${pageId} seq=${p.seq}`,
+        );
+        break;
+      }
+    }
+    // ⚠️ `!adoptedBase`：上面若已经**承接**了对端状态（它比正文列更新），这里就**不许**再用正文列把它盖回去。
+    if (base && !a1Enabled0 && !adoptedBase && hasAnyText(seedJson)) {
       const stateText = plainTextOfState(base);
       const seedText = plainTextOfJson(seedJson);
       if (stateText !== null && seedText !== null && stateText !== seedText) {
