@@ -96,7 +96,49 @@ export function bindPageToEditor(opts: {
  */
 export function loadJsonForEditor(db: ContentSql, pageId: string, storedJson: string): string {
   const state = readPageCrdtState(db, pageId);
-  return state ? projectStateToJson(state) : storedJson;
+  if (!state) return storedJson;
+  const projected = projectStateToJson(state);
+  // ⭐ **2026-11-26（U4 前置真缺陷的根因）**：**空状态不许赢回空页**。
+  //
+  // 现场（两台同 dev `743d328c`）：B 先收到"只有标题"那一笔 ⇒ 它的 page_crdt 是空 root（89B）；
+  // A 之后写入正文（载荷带 `crdt_state`，但要等"打开页面"才合并）⇒ B 从没打开过那页 ⇒ 状态仍空；
+  // 用户一打开 ⇒ 这条函数用**空状态**投影给编辑器 ⇒ 编辑器空 ⇒ 保存把空投影写回 ⇒ **正文没了**。
+  //
+  // 口径（与 Rust 侧 `doc_content::write_page_projection` 的守卫**成对**）：
+  //   · 投影里**一个字都没有** ∧ 落盘正文**有字** ⇒ 用落盘正文**重建**状态并落盘，返回落盘那份；
+  //   · 其余一律照旧（⛔ 不改"状态权威"这条既有语义）。
+  // ⚠️ 重建失败（JSON 缺块身份等）⇒ **退回落盘那份**（编辑器至少能看到正文），并留痕。
+  if (!hasAnyText(projected) && hasAnyText(storedJson)) {
+    try {
+      const rebuilt = openPageSession({ json: storedJson }).exportState();
+      writePageCrdtState(db, pageId, rebuilt, Date.now());
+      return storedJson;
+    } catch {
+      console.warn(
+        `[pageBinding] 空 CRDT 状态重建失败，退回落盘正文：page=${pageId}（⛔ 不静默：见 U4 前置缺陷 2026-11-26）`,
+      );
+      return storedJson;
+    }
+  }
+  return projected;
+}
+
+/** 这份编辑器 JSON 里有没有一个字的正文（与 Rust 侧 `projection_has_text` 同一口径）。 */
+export function hasAnyText(json: string): boolean {
+  const walk = (v: unknown): boolean => {
+    if (Array.isArray(v)) return v.some(walk);
+    if (v && typeof v === "object") {
+      const o = v as Record<string, unknown>;
+      if (typeof o.text === "string" && o.text.trim() !== "") return true;
+      return Object.values(o).some(walk);
+    }
+    return false;
+  };
+  try {
+    return walk(JSON.parse(json));
+  } catch {
+    return false;
+  }
 }
 
 // =====================================================================================

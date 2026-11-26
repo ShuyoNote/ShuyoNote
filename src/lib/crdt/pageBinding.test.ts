@@ -14,8 +14,9 @@ import { EDITOR_NODES } from "../../editor/config";
 import { $createBlockParagraphNode } from "../../editor/nodes/BlockParagraphNode";
 import { toLegacyDoc, toModelDoc } from "../blockIdentity";
 import { readPageCrdtState, type ContentSql } from "../docContent";
-import { bindPageToEditor, bindPageToEditorViaPort, loadJsonForEditor, mergeRemotePageState } from "./pageBinding";
+import { bindPageToEditor, bindPageToEditorViaPort, loadJsonForEditor, mergeRemotePageState, hasAnyText } from "./pageBinding";
 import { openPageSession, projectStateToJson } from "./yDocBridge";
+import * as Y from "yjs";
 
 /** 只认 `page_crdt` 三条 SQL 的极简库（不认识的形状当场抛）。 */
 function fakeDb() {
@@ -180,8 +181,29 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     expect(idsOf(projected)).toEqual(["blk-1", "blk-2", "blk-x"]);
   });
 
-  it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {
-    const store = new Map<string, Uint8Array>();
+  it("⑬b 空状态 + 非空落盘正文 ⇒ **用正文重建状态**（⛔ 不让空状态赢回空页；U4 前置真缺陷）", () => {
+    const { db } = fakeDb();
+    // 造"空 CRDT + 非空正文"这一格（真机现场：B 的 page_crdt 是空 root，而 content_json 有字）
+    const emptyState = Y.encodeStateAsUpdate(new Y.Doc());
+    (db as { run: (sql: string, params: unknown[]) => void }).run(
+      "INSERT INTO page_crdt (page_id, state, updated_at) VALUES (?, ?, ?)",
+      ["p1", emptyState, 1],
+    );
+    expect(readPageCrdtState(db, "p1")).toBeTruthy();
+
+    const loaded = loadJsonForEditor(db, "p1", BASE);
+    expect(loaded).toBe(BASE); // 必须给编辑器"落盘那份"，不是空投影
+    expect(hasAnyText(loaded)).toBe(true);
+
+    // 状态已被重建并落盘 ⇒ 再打开时投影里**有正文**（不再是空）
+    const again = loadJsonForEditor(db, "p1", BASE);
+    expect(hasAnyText(again)).toBe(true);
+    const st = readPageCrdtState(db, "p1");
+    expect(st).toBeTruthy();
+    expect(hasAnyText(projectStateToJson(st!))).toBe(true);
+  });
+
+  it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {    const store = new Map<string, Uint8Array>();
     const port = {
       read: async (id: string) => store.get(id) ?? null,
       save: async (id: string, state: Uint8Array) => {
