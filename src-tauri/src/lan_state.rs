@@ -898,15 +898,27 @@ static HEARTBEAT_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new()
 
 fn heartbeat_enabled() -> bool {
     *HEARTBEAT_ENABLED.get_or_init(|| {
-        crate::lan_heartbeat::heartbeat_enabled_from(
+        let on = crate::lan_heartbeat::heartbeat_enabled_from(
             std::env::var("SHUYONOTE_LAN_HEARTBEAT").ok().as_deref(),
-        )
+        );
+        // ⭐ **2026-11-26 真机复测**：这条只打一次（首次判定时）—— 没有它，
+        //   "到底有没有开"只能靠轮次间隔猜（第一版就这么猜错过一次）。
+        eprintln!(
+            "[{}] [heartbeat] 判定：{}（env=SHUYONOTE_LAN_HEARTBEAT）",
+            crate::lan::log_stamp(),
+            if on {
+                "**已开**：后台轮基础间隔按最近保存分 10s/60s"
+            } else {
+                "关：沿用 task-12 的 120s/60s"
+            }
+        );
+        on
     })
 }
 
 /// ⭐ **S1 接线（2026-11-25，纯函数）**：这一轮该用的基础间隔。
 ///
-/// 档位输入：**只认"最近本地保存"**（`last_save_ms`，来自 `LOCAL_SAVE_AT_MS`）。
+/// 档位输入：**只认"最近本地保存"**（`last_save_ms`，来自 [`LAST_ACTIVITY_MS`]）。
 /// ⛔ 前台焦点与插电状态**还没接**（都要新平台接口）⇒ 这里如实按 `false, false` 传，
 /// 即：**只有"刚保存过"会把档位抬到 Active**，其余一律 Idle。
 pub fn heartbeat_base_interval_ms(last_save_ms: i64, now_ms: i64) -> i64 {
@@ -950,6 +962,14 @@ static LOCAL_SAVE_PENDING: AtomicBool = AtomicBool::new(false);
 /// ⚠️ 默认**一个字都不打**：只在 `SHUYONOTE_LAN_DEBUG_ANNOUNCE` 开着时输出
 /// （与 `lan::announce_recv_line` 同一个开关）⇒ ⛔ 不是用户可见行为。
 static LOCAL_SAVE_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// ⭐ **S1（2026-11-26 真机复测抓到的）**：**不会被消费**的"最近本地活动"时钟。
+///
+/// 为什么不能用 [`LOCAL_SAVE_AT_MS`]：那一枚是「保存 → 公告」的延迟量，公告那一段
+/// 用 `swap(0)` **消费**它（量一次就够）⇒ 下一次公告之后它就变 0 ⇒ 心跳档位会读到
+/// "从没保存过" ⇒ 永远停在 60s 档（第一版真机就是这么错的：后台轮 08:58:22 → 09:00:03）。
+/// 这一枚只 `store`、⛔ 谁都不许清（清一次就等于"用户刚保存过"被抹掉）。
+static LAST_ACTIVITY_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 /// 见上：收到**对端 dirty 公告**的本机时刻（0 ＝ 没有起点）。
 static PEER_DIRTY_SEEN_AT_MS: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 /// ⭐ **2026-11-18（慢支取证）**：保存唤醒一共"武装"过几次（只用于日志配对，⛔ 不参与任何判断）。
@@ -1204,6 +1224,9 @@ pub fn request_round_now_from_source(source: &'static str) {
     ANNOUNCE_DIRTY_PENDING.store(true, Ordering::SeqCst);
     // ⭐ §13.12 Phase 0：记下**保存这一刻**（`save_to_announce` 那一段的起点）。
     LOCAL_SAVE_AT_MS.store(crate::db::now_ms(), Ordering::SeqCst);
+    // ⭐ S1（2026-11-26）：心跳档位的"最近活动"—— **只 store、谁都不许清**
+    //   （上面那一枚会被公告段 `swap(0)` 消费，不能拿来判档）。
+    LAST_ACTIVITY_MS.store(crate::db::now_ms(), Ordering::SeqCst);
     // ⭐ **2026-11-18（慢支取证）**：给每次"武装"编号，好在日志里与"循环有没有看到它"配对。
     //   ⛔ 只诊断：不改变任何 gate/时序。
     let n = WAKE_ARM_COUNT.fetch_add(1, Ordering::SeqCst) + 1;
@@ -2855,7 +2878,7 @@ pub fn start(app: tauri::AppHandle) -> Result<(), String> {
                         last_bg_round_ms,
                         now,
                         meshed.len(),
-                        heartbeat_base_interval_ms(LOCAL_SAVE_AT_MS.load(Ordering::SeqCst), now),
+                        heartbeat_base_interval_ms(LAST_ACTIVITY_MS.load(Ordering::SeqCst), now),
                         auto_retry_next_at(),
                     )
                 } else {

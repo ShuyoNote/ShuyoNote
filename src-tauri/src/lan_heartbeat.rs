@@ -190,5 +190,11 @@ mod tests {
             src.contains("background_round_due_with_base("),
             "心跳档位必须真的进『该不该跑』的判定"
         );
+        // ⭐ 2026-11-26 真机复测：档位时钟必须是**不会被公告段消费**的那一枚
+        //   （用 `LOCAL_SAVE_AT_MS` 会让它在下一次公告后变 0 ⇒ 永远 60s 档）。
+        assert!(
+            src.contains("LAST_ACTIVITY_MS.load("),
+            "心跳档位必须读 LAST_ACTIVITY_MS（不是会被 swap(0) 的 LOCAL_SAVE_AT_MS）"
+        );
     }
 }
