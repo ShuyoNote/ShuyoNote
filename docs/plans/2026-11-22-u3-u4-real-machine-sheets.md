@@ -13,6 +13,14 @@
 1) 两台跑同一 dev 构建：各自 `git rev-parse --short HEAD`，短 SHA 必须一致并把值记下来。
 2) 同一 Wi-Fi/网段、LAN 已配对；只用测试空间。
 3) 先让同一页两边收敛：打开同一页、等一轮成功，记最后一次成功时刻。
+⭐ 2026-11-26 真机补的第 0 条（**原单漏了，缺它测不出块级冲突**）：
+   **A1 自动合并必须开着** —— 默认关时远端状态只进 `page_crdt_pending`、**不会合并**
+   （`main.tsx` 里 `mergeRemotePageState(..., a1AutoMergeEnabled() && spaceAutoMergeEnabled(db))`），
+   而没有合并就不会产生 `page_conflicts`，界面上自然没有「这一页有 1 处冲突」。
+   开法：DevTools → Application → Local Storage → `shuyonote:crdt.autoMerge = 1`（按空间可用 `…autoMerge.<spaceId>`），然后重载。
+⭐ 2026-11-26 真机补的第 0.5 条：**这一页的血统必须同源**（护栏会拒绝合并两条独立血统）。
+   做法：**只用 A 新建的页**，B 那边**没有**这页的状态（会承接 A 的血统）。
+   ⚠️ 若某页历史上被"空页 upsert"污染过（如 U4-BLOCK-1747），会永久分叉 ⇒ 删掉重开新页，别在它身上点"采用对端"绕。
 4) A 起日志（窗口别关）：
    cd C:\Users\cnzen\zhai\repos\ShuyoNote
    $env:SHUYONOTE_MESH_AUTOSYNC="0"   # 只暂停 A 的自动轮；手动同步照旧
