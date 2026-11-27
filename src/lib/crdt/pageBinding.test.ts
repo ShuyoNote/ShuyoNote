@@ -281,6 +281,60 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     b.dispose();
   });
 
+  it("⑬g 无裁定（claim unavailable）⇒ **先等对端**：等到待并状态就承接，⛔ 不自己铸（owner 拍 A）", async () => {
+    const OLD =
+      '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-old","children":[{"type":"text","text":"旧内容","version":1}]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
+    const remoteState = openPageSession({ json: BASE }).exportState();
+    let calls = 0;
+    const store = new Map<string, Uint8Array>();
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, s: Uint8Array) => {
+        store.set(id, s);
+        return null;
+      },
+      // 第一次查：还没到；之后：到了（模拟"对端的 crdt_state 晚几毫秒到"）
+      readPending: async () => (++calls <= 1 ? [] : [{ seq: 1, state: remoteState }]),
+    };
+    (globalThis as { __SHUYONOTE_CLAIM_WAIT_MS__?: unknown }).__SHUYONOTE_CLAIM_WAIT_MS__ = 1000;
+    try {
+      const e = appEditor(OLD);
+      const b = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e, seedJson: OLD });
+      const text = serialize(e);
+      expect(text).toContain("第一段");
+      expect(text).not.toContain("旧内容");
+      expect(b.seeded).toBe(false);
+      expect(b.adopted).toBe(true);
+      b.dispose();
+    } finally {
+      delete (globalThis as { __SHUYONOTE_CLAIM_WAIT_MS__?: unknown }).__SHUYONOTE_CLAIM_WAIT_MS__;
+    }
+  });
+
+  it("⑬h 无裁定 + 等不到对端 ⇒ 超时后照旧按离线铸（行为与旧版一致，只是晚一次等待）", async () => {
+    const OLD =
+      '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-old","children":[{"type":"text","text":"旧内容","version":1}]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
+    const store = new Map<string, Uint8Array>();
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, s: Uint8Array) => {
+        store.set(id, s);
+        return null;
+      },
+      readPending: async () => [],
+    };
+    (globalThis as { __SHUYONOTE_CLAIM_WAIT_MS__?: unknown }).__SHUYONOTE_CLAIM_WAIT_MS__ = 0; // 不等
+    try {
+      const e = appEditor(OLD);
+      const b = await bindPageToEditorViaPort({ port, pageId: "p1", editor: e, seedJson: OLD });
+      expect(serialize(e)).toContain("旧内容");
+      expect(b.seeded).toBe(true);
+      b.dispose();
+    } finally {
+      delete (globalThis as { __SHUYONOTE_CLAIM_WAIT_MS__?: unknown }).__SHUYONOTE_CLAIM_WAIT_MS__;
+    }
+  });
+
   it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {
     const store = new Map<string, Uint8Array>();
     const port = {

@@ -172,6 +172,48 @@ export function plainTextOfState(state: Uint8Array): string | null {
   }
 }
 
+/** 拿不到裁定时**先等对端血统**的默认窗口（ms）。`0` ⇒ 不等（回到旧行为）。 */
+export const CLAIM_WAIT_DEFAULT_MS = 5_000;
+
+/**
+ * 等对端血统的窗口：`globalThis.__SHUYONOTE_CLAIM_WAIT_MS__` 可覆盖（判据/现场调参用）。
+ * 上限 60s（⛔ 不许把"打开页面"无限期挂住）；非法值 ⇒ 默认 5s。
+ */
+export function claimWaitMs(): number {
+  const g = globalThis as { __SHUYONOTE_CLAIM_WAIT_MS__?: unknown };
+  const raw = g.__SHUYONOTE_CLAIM_WAIT_MS__;
+  if (raw === undefined || raw === null) {
+    // 测试环境（vitest）默认**不等**：否则每个"首开"用例都要白等 5 秒（判据只关心行为，不关心等待）。
+    const mode = (import.meta as { env?: { MODE?: string } }).env?.MODE;
+    if (mode === "test") return 0;
+    return CLAIM_WAIT_DEFAULT_MS;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return CLAIM_WAIT_DEFAULT_MS;
+  return Math.min(n, 60_000);
+}
+
+/**
+ * 等"对端的待并状态"出现（最多 `waitMs`，每 `pollMs` 查一次；先立刻查一次）。
+ *
+ * 用途：`bindPageToEditorViaPort` 在 `claim=unavailable` 时不马上铸血统 ——
+ * 先给对端一个窗口（默认 5s），拿到了就**承接**（同一棵树），拿不到再按离线铸。
+ */
+export async function waitForRemotePending(
+  port: PageStatePort,
+  pageId: string,
+  waitMs: number,
+  pollMs = 250,
+): Promise<{ seq: number; state: Uint8Array } | null> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const list = (await port.readPending?.(pageId)) ?? [];
+    if (list.length > 0) return list[0];
+    if (Date.now() >= deadline) return null;
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
 // =====================================================================================
 // S4a：**远端来的状态怎么并进本机**（"真正的合并同步"在客户端这一侧的唯一入口）
 //
@@ -668,6 +710,38 @@ export async function bindPageToEditorViaPort(opts: {
     throw new Error(
       "这一页的首条编辑历史属于另一台设备：等它同步下来再打开（本机这次**没有**新建血统）",
     );
+  }
+  // ⭐ **2026-11-27（owner 拍 A：只有一台能铸血统）**：拿不到裁定时**先等对端**，再按离线铸。
+  //
+  // 真机现场（2026-11-26）：B 在"收到 A 的 crdt_state 之前"先打开了新页 ⇒ claim 端口还没有
+  // （`claimVerdict` 今天恒返回 unavailable）⇒ 直接 `mint-provisional-offline` ⇒ 两条血统永久分叉，
+  // 之后每轮都只能弹"另一条编辑历史"。
+  // 口径：**unavailable ⇒ 先等 `waitMs`（默认 5s，env `SHUYONOTE_CRDT_CLAIM_WAIT_MS`）**，
+  //       等到对端的待并状态就**承接**它（同一棵树）；等不到再按"离线未裁定"铸（行为与以前一致，只是晚 5 秒）。
+  //       ⛔ 不改 `decideBootstrap` 的纯函数语义（那是判据面），只改**等待**这一步。
+  if (decision.action === "mint-provisional-offline") {
+    const waitMs = claimWaitMs();
+    if (waitMs > 0) {
+      const got = await waitForRemotePending(port, pageId, waitMs);
+      if (got) {
+        const session = openPageSession({ state: got.state, editor });
+        await port.save(pageId, session.exportState());
+        console.warn("[crdt] 无裁定 ⇒ 等到对端血统并承接（⛔ 不自己铸一条）：page=" + pageId + " seq=" + got.seq);
+        return {
+          session,
+          seeded: false,
+          adopted: true,
+          pendingSkipped: 0,
+          pendingDeferred: 0,
+          async persist() {
+            await port.save(pageId, session.exportState());
+          },
+          dispose() {
+            session.dispose();
+          },
+        };
+      }
+    }
   }
   // `mint` 与 `mint-provisional-offline` 都建（后者是**未裁定**的：联网后若撞上血统护栏，
   // 由 `mergeRemotePageState` 如实报冲突，而不是假装它就是权威）。
