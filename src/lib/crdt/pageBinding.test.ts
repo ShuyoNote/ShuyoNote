@@ -21,6 +21,7 @@ import * as Y from "yjs";
 /** 只认 `page_crdt` 三条 SQL 的极简库（不认识的形状当场抛）。 */
 function fakeDb() {
   const rows = new Map<string, Uint8Array>();
+  const contents = new Map<string, { title: string; content_json: string; content_text: string }>();
   const db = {
     run(sql: string, params: unknown[]) {
       if (/INSERT INTO page_crdt/.test(sql)) {
@@ -42,10 +43,15 @@ function fakeDb() {
         const s = rows.get(String((params ?? [])[0]));
         return s ? [{ state: s }] : [];
       }
+      // ⭐ 2026-11-27：`readContent` 的形状（mergeRemotePageState 的"陈旧/让位"判定要用）
+      if (/SELECT title, content_json, content_text FROM pages/.test(sql)) {
+        const c = contents.get(String((params ?? [])[0]));
+        return c ? [c] : [];
+      }
       return [];
     },
   };
-  return { db: db as unknown as ContentSql, rows };
+  return { db: db as unknown as ContentSql, rows, contents };
 }
 
 function buildJson(build: (editor: LexicalEditor) => void): string {
@@ -333,6 +339,33 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     } finally {
       delete (globalThis as { __SHUYONOTE_CLAIM_WAIT_MS__?: unknown }).__SHUYONOTE_CLAIM_WAIT_MS__;
     }
+  });
+
+  it("⑬i 血统分叉 + 本机**无独立改动**（状态正文==正文列）⇒ **采用远端**（临时铸的那条让位）", () => {
+    const { db, rows, contents } = fakeDb();
+    const localJson =
+      '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-old","children":[{"type":"text","text":"旧内容","version":1}]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
+    // 本机：状态是从**正文**铸的（正文 == 状态投影）⇒ 没有独立改动
+    rows.set("p1", openPageSession({ json: localJson }).exportState());
+    contents.set("p1", { title: "t", content_json: localJson, content_text: "旧内容" });
+    const remote = openPageSession({ json: BASE }).exportState();
+    const res = mergeRemotePageState(db, "p1", remote, 1, false);
+    expect(res.adopted).toBe(true);
+    expect(res.lineageConflict).toBeUndefined();
+    expect(res.state.length).toBe(remote.length);
+  });
+
+  it("⑬j 血统分叉 + 本机**有改动**（状态正文≠正文列）⇒ 仍拒绝（护栏不变，弹提示条那条路）", () => {
+    const { db, rows, contents } = fakeDb();
+    const contentJson =
+      '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-old","children":[{"type":"text","text":"旧内容","version":1}]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
+    // 本机状态里有"第一段/第二段"，正文列却是"旧内容" ⇒ 状态有新改动 ⇒ 不许替换
+    rows.set("p1", openPageSession({ json: BASE }).exportState());
+    contents.set("p1", { title: "t", content_json: contentJson, content_text: "旧内容" });
+    const remote = openPageSession({ json: BASE }).exportState();
+    const res = mergeRemotePageState(db, "p1", remote, 1, false);
+    expect(res.adopted).toBe(false);
+    expect(res.staleState === true || res.lineageConflict !== undefined).toBe(true);
   });
 
   it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {

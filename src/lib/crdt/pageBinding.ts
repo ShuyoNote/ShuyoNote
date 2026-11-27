@@ -163,6 +163,26 @@ export function plainTextOfJson(json: string): string | null {
   }
 }
 
+/**
+ * 本机这条血统**有没有独立改动**：状态投影的正文 == 正文列的正文。
+ *
+ * 用途：血统分叉时决定"让位还是弹提示条"（2026-11-27 owner 拍）：
+ *   · 相等 ⇒ 本机只是**临时从正文铸**的一条（典型：启动时自动重开、同步还没跑）⇒ 让位；
+ *   · 不等/读不到 ⇒ 用户在本机改过 ⇒ **不让位**，交给护栏与提示条。
+ * ⛔ 只比较**正文串**，不比排版/块 id（那些差异不代表"人改过"）。
+ */
+export function localHasNoIndependentEdits(db: ContentSql, pageId: string, mine: Uint8Array): boolean {
+  try {
+    const stored = readContent(db, pageId);
+    if (!stored) return false;
+    const mineText = plainTextOfState(mine);
+    const contentText = plainTextOfJson(stored.json);
+    return mineText !== null && contentText !== null && mineText === contentText;
+  } catch {
+    return false; // 读不到 ⇒ 不冒险（照旧走护栏）
+  }
+}
+
 /** 一份 CRDT 状态的正文串（投影再取文本；解不开 ⇒ null）。 */
 export function plainTextOfState(state: Uint8Array): string | null {
   try {
@@ -350,9 +370,19 @@ export function mergeRemotePageState(
     //   老库/测试夹具读不到内容列 ⇒ 不拦（保持既有测试与老页行为）。
     try {
       const stored = readContent(db, pageId);
-      if (stored && projectStateToJson(mine) !== stored.json) {
-        console.warn(`[a1] 本机 CRDT 状态与内容列不一致（状态陈旧）⇒ 拒绝合并 page=${pageId}`);
-        return { adopted: false, state: mine, derivedStale: false, staleState: true };
+      if (stored) {
+        const mineText = plainTextOfState(mine);
+        const storedText = plainTextOfJson(stored.json);
+        // ⭐ **2026-11-27**：按**正文**判"陈旧"（旧口径比整串 JSON，会把"同一段文字的不同排版"
+        //   也判成陈旧 ⇒ 连"临时铸的那条让位"都走不到）。文字比不出来（null）⇒ 退回旧口径（整串比较）。
+        const stale =
+          mineText !== null && storedText !== null
+            ? mineText !== storedText
+            : projectStateToJson(mine) !== stored.json;
+        if (stale) {
+          console.warn(`[a1] 本机 CRDT 状态与内容列不一致（状态陈旧）⇒ 拒绝合并 page=${pageId}`);
+          return { adopted: false, state: mine, derivedStale: false, staleState: true };
+        }
       }
     } catch {
       // 内容列读不出/解析失败 ⇒ 不做这个判断（不拦，但也不写坏：后续合并仍有 try/catch）。
@@ -376,6 +406,20 @@ export function mergeRemotePageState(
       mine: [...mineIds].sort((x, y) => x - y),
       remote: [...remoteIds].sort((x, y) => x - y),
     };
+    // ⭐ **2026-11-27（owner 拍「临时铸的血统让位」）**：血统不同，但**本机这条没有独立改动**
+    //   （状态投影的正文 == 正文列）⇒ 说明它只是"启动时同步没跑、临时从正文铸的一条"，
+    //   ⇒ **采用远端那条**（状态 + 投影一起换，两边一致），⛔ 不弹提示条。
+    //   反例（必须仍然走护栏）：本机状态里的正文与正文列**不一致** ⇒ 用户在本机改过 ⇒ 不替换。
+    //   真机来由：B 启动时自动重开上次那页（pending 还空）⇒ 铸了 496；A 的 182 之后才到 ⇒ 永远分叉。
+    if (localHasNoIndependentEdits(db, pageId, mine)) {
+      writePageCrdtState(db, pageId, remote, now);
+      writeContentProjection(db, pageId, projectStateToJson(remote));
+      markTextStale(db, pageId);
+      console.warn(
+        "[crdt] 血统分叉但本机无独立改动 ⇒ 采用远端（临时铸的那条让位）：page=" + pageId,
+      );
+      return { adopted: true, state: remote, derivedStale: true };
+    }
     // ★ **立刻有痕**（不依赖调用方）：这条路径一旦发生就说明"两台设备各自建过血统"，
     //   静默吞掉会让两台各自继续长、问题更难查。调用方（`main.tsx` 注册的那版）还会再 toast 一次。
     console.warn(`[crdt] 血统冲突：拒绝合并（本机版本保留）page=${pageId}`, conflict);
