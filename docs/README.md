@@ -365,6 +365,7 @@ node scripts/test-report.mjs --list                                             
 | [plans/2026-11-22-s2-s1-recovery-acceptance.md](plans/2026-11-22-s2-s1-recovery-acceptance.md) | ⭐ **S2 换网 / S1 唤醒恢复 —— 真机验收操作单（待执行）**：前置（两台设 env 重启）、换网/唤醒步骤、记录格式、停止条件、回滚；目标换网 ≤30s、唤醒 ≤15s；需 owner 双手 |
 | [plans/2026-11-22-sync2-closeout-plan.md](plans/2026-11-22-sync2-closeout-plan.md) | ⭐ **同步 2.0 收口计划（A1 移 2.x，11-26 发 2.0）**：范围（G1–G5 + U3/U4 片4 + 发版/通道）、移出项（A1/S1 心跳/F3 扇出/ACME）、11-22→11-26 排期、发版前检查、风险与回滚 |
 | [plans/2026-11-22-2.1.16-ops-publish.md](plans/2026-11-22-2.1.16-ops-publish.md) | ⭐ **2.1.16 运营发布清单（待执行）**：GitCode Release（5 资产）＋ `/app/latest.json` 推到 2.1.16；发版脚本命令、`check-release-state` 判据、回滚与令牌纪律 |
+| [plans/2026-11-28-u4-crdt-path-conflict-gap.md](plans/2026-11-28-u4-crdt-path-conflict-gap.md) | ⭐ **U4 缺口：CRDT 快捷路径上"同块双改"是静默 LWW**（内容级路径才可见/可裁决；含落地四步与四条判据） |
 | [plans/2026-11-22-2.1.16-release-material.md](plans/2026-11-22-2.1.16-release-material.md) | ⭐ **2.1.16 发版素材（交运营）**：版本/日期/类型/主题、用户可感知改动、老用户提醒、产物清单（含补产 Web zip 与 sha256、macOS 缺件原因）；角色边界与后续分工 |
 | [plans/2026-11-22-sync2x-fast-roadmap.md](plans/2026-11-22-sync2x-fast-roadmap.md) | ⭐ **个人版同步 2.x 快速路线（尽快接近全部）**：S1 心跳/F3 扇出与带宽/A1 CRDT/relay ACME/U3-U4；四周可滚动排期、默认关+回滚+判据、三条线并行、需 owner 的窗口 |
 | [plans/2026-11-22-a1-g0-design.md](plans/2026-11-22-a1-g0-design.md) | ⭐ **A1 G0 设计稿**：同血统块级自动合并（默认关）、失败保本地、血统不相容仍拒绝；开关/回滚/判据/影子窗口重启/风险止损 |
