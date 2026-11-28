@@ -14,7 +14,7 @@ import { EDITOR_NODES } from "../../editor/config";
 import { $createBlockParagraphNode } from "../../editor/nodes/BlockParagraphNode";
 import { toLegacyDoc, toModelDoc } from "../blockIdentity";
 import { readPageCrdtState, type ContentSql } from "../docContent";
-import { bindPageToEditor, bindPageToEditorViaPort, loadJsonForEditor, mergeRemotePageState, hasAnyText } from "./pageBinding";
+import { bindPageToEditor, bindPageToEditorViaPort, loadJsonForEditor, mergeRemotePageState, hasAnyText, newestFirst } from "./pageBinding";
 import { openPageSession, projectStateToJson } from "./yDocBridge";
 import * as Y from "yjs";
 
@@ -373,6 +373,55 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     const res = mergeRemotePageState(db, "p1", remote, 1, false);
     expect(res.adopted).toBe(false);
     expect(res.staleState === true || res.lineageConflict !== undefined).toBe(true);
+  });
+
+  it("⑬k `newestFirst`：待并状态一律**从新到旧**（真机：篮子里 B2/B3 并存时拿旧版当基准了）", () => {
+    const list = [{ seq: 1 }, { seq: 3 }, { seq: 2 }];
+    expect(newestFirst(list).map((p) => p.seq)).toEqual([3, 2, 1]);
+    expect(newestFirst([])).toEqual([]);
+  });
+
+  it("⑬l 端口版：pending 升序喂进来 ⇒ 合并后**无跳过/无延后**、正文是较新那版、且待并已清", async () => {
+    const store = new Map<string, Uint8Array>();
+    const base = openPageSession({ json: BASE });
+    const s1 = base.exportState();
+    base.edit(() => {
+      const p = $createBlockParagraphNode("blk-new");
+      p.append($createTextNode("新增一行"));
+      $getRoot().append(p);
+    });
+    const s2 = base.exportState();
+    base.dispose();
+    let cleared = 0;
+    const port = {
+      read: async (id: string) => store.get(id) ?? null,
+      save: async (id: string, s: Uint8Array) => {
+        store.set(id, s);
+        return null;
+      },
+      // ⚠️ 故意按**升序**给（Rust 就是升序）—— 组件内部必须自己排成从新到旧
+      readPending: async () => [
+        { seq: 1, state: s1 },
+        { seq: 2, state: s2 },
+      ],
+      clearPending: async () => {
+        cleared += 1;
+      },
+    };
+    const e = appEditor(EMPTY);
+    const b = await bindPageToEditorViaPort({
+      port,
+      pageId: "p1",
+      editor: e,
+      seedJson: EMPTY,
+      a1Enabled: true,
+    });
+    const text = serialize(e);
+    expect(text).toContain("新增一行");
+    expect(b.pendingSkipped).toBe(0);
+    expect(b.pendingDeferred).toBe(0);
+    expect(cleared).toBe(1);
+    b.dispose();
   });
 
   it("⑭ 端口版（界面侧走 `api` 的那条路）：首开建一次并落盘；第二次**只载入**、不再建血统", async () => {

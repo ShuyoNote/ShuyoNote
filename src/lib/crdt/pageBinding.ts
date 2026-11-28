@@ -164,6 +164,16 @@ export function plainTextOfJson(json: string): string | null {
 }
 
 /**
+ * 待并状态**从新到旧**（`seq` 降序；同 seq 保持原相对顺序）。
+ *
+ * 为什么：篮子里可能同时有对端的多个版本（B2、B3…）。按升序合并 ⇒ **拿旧版当基准**
+ * （真机 2026-11-28：U4 的冲突快照记的是 B2 而不是 B3）。口径：最新那条先处理。
+ */
+export function newestFirst<T extends { seq: number }>(pending: readonly T[]): T[] {
+  return [...pending].sort((a, b) => b.seq - a.seq);
+}
+
+/**
  * 本机**有没有真的写过这一页**（变更账里有没有这一页的本地写入）。
  *
  * 用途（2026-11-28，owner 拍）：血统分叉时判断"临时铸的那条要不要让位"——
@@ -617,7 +627,12 @@ export async function bindPageToEditorViaPort(opts: {
 }): Promise<AsyncPageBinding> {
   const { port, pageId, editor, seedJson } = opts;
   const state0 = await port.read(pageId);
-  const pending = (await port.readPending?.(pageId)) ?? [];
+  // ⭐ **2026-11-28（真机 U4 抓到的"合并基准过期"）**：待并状态**按 seq 从新到旧**处理。
+  //
+  // 现场：A 的篮子里同时躺着 B2（旧）和 B3（新），循环按 seq 升序 ⇒ **先拿 B2 当基准去合并**
+  // ⇒ 冲突快照记的是 B2、用户看到"我发的是最新版，它按上一版算"。
+  // 口径：`pending[0]` 必须是**最新**那条（没有本机状态时它就是基座；有本机状态时它先参与合并）。
+  const pending = newestFirst((await port.readPending?.(pageId)) ?? []);
 
   // ⭐ **2026-11-26（真机第二次复现，生产路径就是这一条）**：**空状态不许用来水合编辑器**。
   //
