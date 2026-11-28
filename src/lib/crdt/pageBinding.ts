@@ -164,6 +164,27 @@ export function plainTextOfJson(json: string): string | null {
 }
 
 /**
+ * 本机**有没有真的写过这一页**（变更账里有没有这一页的本地写入）。
+ *
+ * 用途（2026-11-28，owner 拍）：血统分叉时判断"临时铸的那条要不要让位"——
+ *   · 账里**没有**这一页的写入 ⇒ 这台从没写过它 ⇒ 账本只能是"临时从正文铸的" ⇒ 让位；
+ *   · 账里**有** ⇒ 本地真的改过 ⇒ 不让位（护栏 + 提示条，保护本地改动）。
+ * 读不到变更账（老库/夹具形状不同）⇒ **返回 true**（当作"写过" ⇒ 不让位，宁可保守）。
+ */
+export function hasLocalPageAuthorship(db: ContentSql, pageId: string): boolean {
+  try {
+    const rows = db.query<{ c: number }>(
+      "SELECT COUNT(*) AS c FROM changes WHERE entity = 'page' AND entity_id = ?",
+      [pageId],
+    );
+    const c = Number(rows?.[0]?.c ?? 0);
+    return c > 0;
+  } catch {
+    return true; // 读不到 ⇒ 保守：不让位
+  }
+}
+
+/**
  * 本机这条血统**有没有独立改动**：状态投影的正文 == 正文列的正文。
  *
  * 用途：血统分叉时决定"让位还是弹提示条"（2026-11-27 owner 拍）：
@@ -365,6 +386,25 @@ export function mergeRemotePageState(
 ): MergedRemoteState {
   const mine = readPageCrdtState(db, pageId);
   if (mine) {
+    // ⭐ **2026-11-28（owner 拍 A 的最后一刀）**：**"这台有没有真的写过这一页"才是让位的判据**。
+    //
+    // 真机来由（PAIR-TEST-3）：B 启动时自动重开上次那页（同步还没跑）⇒ 从正文临时铸一条；
+    // A 的账本之后才到。上一版用"状态正文 == 正文列正文"去猜"是不是临时铸的"——真机里这两者
+    // **本来就不同**（正文列是远端更新后的新版）⇒ 条件判 false ⇒ 不让位 ⇒ 弹提示条。
+    // 现口径（直接看事实，不猜）：**本机变更账里没有这一页的任何本地写入** ⇒ 这台从没写过它
+    // ⇒ 它的账本只可能是"临时铸"的 ⇒ 让位（状态与投影一起换成远端的）。
+    // 反例：本机写过这一页（账里有一笔）⇒ 不让位，照旧走护栏弹提示条（保护本地改动）。
+    const forkIdsMine = lineageClientIds(mine);
+    const forkIdsRemote = lineageClientIds(remote);
+    if (!lineagesRelated(forkIdsMine, forkIdsRemote) && !hasLocalPageAuthorship(db, pageId)) {
+      writePageCrdtState(db, pageId, remote, now);
+      writeContentProjection(db, pageId, projectStateToJson(remote));
+      markTextStale(db, pageId);
+      console.warn(
+        "[crdt] 血统分叉 ∧ 本机从没写过这一页 ⇒ 采用远端（临时铸的那条让位）：page=" + pageId,
+      );
+      return { adopted: true, state: remote, derivedStale: true };
+    }
     // ⭐ A1 安全闸（2026-11-22 影子扫描发现 5 页状态投影 ≠ 内容列）：
     //   状态陈旧时合并再写投影会**覆盖用户的新内容** ⇒ 宁可拒绝，⛔ 不赌。
     //   老库/测试夹具读不到内容列 ⇒ 不拦（保持既有测试与老页行为）。

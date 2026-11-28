@@ -22,6 +22,8 @@ import * as Y from "yjs";
 function fakeDb() {
   const rows = new Map<string, Uint8Array>();
   const contents = new Map<string, { title: string; content_json: string; content_text: string }>();
+  // 本机**写过**的页（变更账里有一笔）—— 2026-11-28 让位判据用它
+  const authored = new Set<string>();
   const db = {
     run(sql: string, params: unknown[]) {
       if (/INSERT INTO page_crdt/.test(sql)) {
@@ -48,10 +50,14 @@ function fakeDb() {
         const c = contents.get(String((params ?? [])[0]));
         return c ? [c] : [];
       }
+      // ⭐ 2026-11-28：让位判据 = "本机有没有写过这一页"（变更账里有没有这一页的本地写入）
+      if (/SELECT COUNT\(\*\) AS c FROM changes/.test(sql)) {
+        return [{ c: authored.has(String((params ?? [])[0])) ? 1 : 0 }];
+      }
       return [];
     },
   };
-  return { db: db as unknown as ContentSql, rows, contents };
+  return { db: db as unknown as ContentSql, rows, contents, authored };
 }
 
 function buildJson(build: (editor: LexicalEditor) => void): string {
@@ -341,13 +347,14 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     }
   });
 
-  it("⑬i 血统分叉 + 本机**无独立改动**（状态正文==正文列）⇒ **采用远端**（临时铸的那条让位）", () => {
+  it("⑬i 血统分叉 + 本机**从没写过这一页**（变更账里没有本地写入）⇒ 采用远端（临时铸的那条让位）", () => {
     const { db, rows, contents } = fakeDb();
     const localJson =
       '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-old","children":[{"type":"text","text":"旧内容","version":1}]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
-    // 本机：状态是从**正文**铸的（正文 == 状态投影）⇒ 没有独立改动
+    // 真机同形：本机账本是从**旧正文**铸的，而正文列已经被远端更新成别的内容（文字**不同**）
+    // ⇒ 旧口径（比文字）会判"有改动"。新口径看的是"本机有没有写过这一页"。
     rows.set("p1", openPageSession({ json: localJson }).exportState());
-    contents.set("p1", { title: "t", content_json: localJson, content_text: "旧内容" });
+    contents.set("p1", { title: "t", content_json: BASE, content_text: "第一段第二段" });
     const remote = openPageSession({ json: BASE }).exportState();
     const res = mergeRemotePageState(db, "p1", remote, 1, false);
     expect(res.adopted).toBe(true);
@@ -355,13 +362,13 @@ describe("冲刺 S3b-2b：一页 ↔ 真编辑器的绑定", () => {
     expect(res.state.length).toBe(remote.length);
   });
 
-  it("⑬j 血统分叉 + 本机**有改动**（状态正文≠正文列）⇒ 仍拒绝（护栏不变，弹提示条那条路）", () => {
-    const { db, rows, contents } = fakeDb();
+  it("⑬j 血统分叉 + 本机**写过这一页**（变更账里有一笔）⇒ 仍拒绝（保护本地改动，弹提示条那条路）", () => {
+    const { db, rows, contents, authored } = fakeDb();
     const contentJson =
       '{"root":{"children":[{"type":"paragraph","version":1,"format":"","indent":0,"direction":null,"blockId":"blk-old","children":[{"type":"text","text":"旧内容","version":1}]}],"type":"root","format":"","indent":0,"version":1,"direction":null}}';
-    // 本机状态里有"第一段/第二段"，正文列却是"旧内容" ⇒ 状态有新改动 ⇒ 不许替换
     rows.set("p1", openPageSession({ json: BASE }).exportState());
     contents.set("p1", { title: "t", content_json: contentJson, content_text: "旧内容" });
+    authored.add("p1"); // 本机写过 ⇒ 不让位
     const remote = openPageSession({ json: BASE }).exportState();
     const res = mergeRemotePageState(db, "p1", remote, 1, false);
     expect(res.adopted).toBe(false);
