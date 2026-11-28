@@ -177,7 +177,11 @@ export function hasLocalPageAuthorship(db: ContentSql, pageId: string): boolean 
       "SELECT COUNT(*) AS c FROM changes WHERE entity = 'page' AND entity_id = ?",
       [pageId],
     );
-    const c = Number(rows?.[0]?.c ?? 0);
+    // ⚠️ **查不到形状（返回空）⇒ 当作"读过"**：夹具/老库没有这张表时不能推出"没写过"，
+    //    否则护栏会被静默关掉（判据 ② 当场红）。只有**明确读到 `c=0`** 才算"本机没写过"。
+    if (!rows || rows.length === 0) return true;
+    const c = Number(rows[0]?.c);
+    if (!Number.isFinite(c)) return true;
     return c > 0;
   } catch {
     return true; // 读不到 ⇒ 保守：不让位
